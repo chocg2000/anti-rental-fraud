@@ -70,6 +70,18 @@ def assess_overall_safety(
             "— 참고용으로만 활용하세요."
         )
 
+    # 대항력 공백(잔금일 당일 접수된 권리) — 익일 0시에야 효력이 생기는 대항력보다
+    # 먼저 선순위를 차지해버리는 전형적인 사기 타이밍이라 즉시 danger로 잡는다.
+    gap_risk = tenancy_safety.get("possessionPriorityGapRisk", {})
+    if gap_risk.get("gapRiskDetected") is True:
+        grade = _max_grade(grade, "danger")
+        reasons.append(f"대항력 공백 위험 — {gap_risk.get('reason', '')}")
+
+    fixed_date_risk = tenancy_safety.get("fixedDateRisk", {})
+    if fixed_date_risk.get("riskLevel") == "warning":
+        grade = _max_grade(grade, "warning")
+        reasons.append(f"확정일자 미확인 — {fixed_date_risk.get('reason', '')}")
+
     identity_check = tenancy_safety.get("landlordIdentityCheck", {})
     identity_risk_level = identity_check.get("riskLevel", "unknown")
     if identity_risk_level in ("caution", "warning", "danger"):

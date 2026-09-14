@@ -75,6 +75,12 @@ class TestParseSummaryRights(unittest.TestCase):
         self.assertEqual(len(rights), 1)
         self.assertEqual(rights[0]["rightType"], "전세권설정")
         self.assertEqual(rights[0]["amount"], 300_000_000)
+        self.assertEqual(rights[0]["receivedDate"], "2025-03-26")
+
+    def test_missing_date_returns_none_not_crash(self):
+        text = "4    근저당권설정          채권최고액 금115,200,000원          김하기\n"
+        rights = parse_summary_rights(text)
+        self.assertIsNone(rights[0]["receivedDate"])
 
     def test_no_record_returns_empty(self):
         rights = parse_summary_rights("- 기록사항 없음")

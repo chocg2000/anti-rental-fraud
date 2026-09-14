@@ -25,6 +25,7 @@ Tesseract OCR 정확도가 심각하게 떨어지지만, 인터넷등기소가 �
 """
 
 import re
+from datetime import date as date_cls
 
 _AMOUNT_PATTERN = re.compile(r'금?\s*([\d,]+)\s*원')
 _OWNER_LINE_PATTERN = re.compile(
@@ -33,6 +34,18 @@ _OWNER_LINE_PATTERN = re.compile(
 _RANK_PATTERN = re.compile(r'^\s*(\d+(?:-\d+)?)\s')
 _RIGHT_TYPE_PATTERN = re.compile(r'(근저당권설정|전세권설정)')
 _NO_RECORD_PATTERN = re.compile(r'기록사항\s*없음')
+_DATE_PATTERN = re.compile(r'(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일')
+
+
+def _parse_date(text: str) -> str | None:
+    m = _DATE_PATTERN.search(text or "")
+    if not m:
+        return None
+    y, mo, d = (int(x) for x in m.groups())
+    try:
+        return date_cls(y, mo, d).isoformat()
+    except ValueError:
+        return None
 
 
 def parse_summary_ownership(section_text: str) -> list[dict]:
@@ -53,6 +66,9 @@ def parse_summary_rights(section_text: str) -> list[dict]:
     '3. (근)저당권 및 전세권 등 (을구)' 섹션에서 현재 유효한 근저당권/전세권을 뽑는다.
     이미 말소된 권리는 법원 시스템이 요약에서 제외해주므로, 여기 나온 건 전부 '유효'하다고
     간주해도 된다 (본문 페이지처럼 말소 판별 로직이 필요 없다).
+
+    receivedDate(접수일)는 tenancy_safety_rules.check_possession_priority_gap_risk()가
+    "대항력 발생 시점보다 먼저(또는 같은 날) 접수된 권리가 있는지" 판단할 때 쓴다.
     """
     if _NO_RECORD_PATTERN.search(section_text):
         return []
@@ -72,6 +88,7 @@ def parse_summary_rights(section_text: str) -> list[dict]:
             "rank": rank_match.group(1) if rank_match else None,
             "rightType": type_match.group(1),
             "amount": int(amount_match.group(1).replace(",", "")) if amount_match else None,
+            "receivedDate": _parse_date(line),
             "rawLine": line.strip(),
         })
 

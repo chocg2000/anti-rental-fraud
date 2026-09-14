@@ -102,6 +102,16 @@ class AssessmentRequest(BaseModel):
         description="유저 자가확인 위반건축물 여부. 건축물대장 API는 이 값을 절대 제공하지 "
                     "않으므로 프론트가 반드시 체크리스트로 물어봐야 한다. True면 danger로 강제.",
     )
+    move_in_date: str | None = Field(
+        default=None,
+        description="잔금(입주)/전입신고 예정일 YYYY-MM-DD. 생략하면 대항력 공백 위험은 "
+                    "unknown으로 반환된다.",
+    )
+    has_fixed_date: bool | None = Field(
+        default=None,
+        description="확정일자를 받았는지 여부. 생략(null)하면 unknown, false를 명시적으로 "
+                    "보내면 '미확보' warning이 반영된다.",
+    )
 
 
 class AssessmentResponse(BaseModel):
@@ -165,6 +175,8 @@ def create_assessment(payload: AssessmentRequest) -> dict:
         ownership_history=ownership_history,
         registry_critical_keywords=payload.registry_critical_keywords,
         user_confirmed_violation_building=payload.user_confirmed_violation_building,
+        move_in_date=payload.move_in_date,
+        has_fixed_date=payload.has_fixed_date,
     )
 
     assessment_id = uuid.uuid4().hex

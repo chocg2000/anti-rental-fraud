@@ -27,7 +27,12 @@ from datetime import date
 
 from property_aggregator import get_property_info, PropertyAggregationError
 from registry_summary_parser import parse_summary_registry
-from tenancy_safety_rules import check_deposit_priority_risk, check_landlord_identity_match
+from tenancy_safety_rules import (
+    check_deposit_priority_risk,
+    check_landlord_identity_match,
+    check_possession_priority_gap_risk,
+    check_fixed_date_risk,
+)
 from fraud_pattern_rules import detect_new_villa_recent_ownership_change
 from tax_clearance_check import check_tax_clearance_certificate
 from overall_safety_assessment import assess_overall_safety
@@ -49,6 +54,8 @@ def run_full_assessment(
     ownership_history: list[dict] | None = None,
     registry_critical_keywords: list[str] | None = None,
     user_confirmed_violation_building: bool = False,
+    move_in_date: str | None = None,
+    has_fixed_date: bool | None = None,
 ) -> dict:
     """
     Args:
@@ -70,6 +77,10 @@ def run_full_assessment(
         user_confirmed_violation_building: 유저가 직접 확인한 위반건축물 여부.
             건축물대장 API는 이 정보를 제공하지 않으므로 반드시 유저 자가확인
             체크리스트에서 받아와야 한다. True면 최종 등급이 danger로 강제된다.
+        move_in_date: 잔금(입주)/전입신고 예정일 "YYYY-MM-DD" (선택 — 없으면 대항력
+            공백 위험은 unknown으로 나간다)
+        has_fixed_date: 확정일자를 받았는지 여부 (선택 — None이면 unknown으로 나간다.
+            아직 안 받았다면 False를 명시적으로 줘야 "미확보" warning이 반영된다)
 
     Returns:
         {
@@ -106,9 +117,11 @@ def run_full_assessment(
         registry = parse_summary_registry(registry_summary_text)
         registry_owners = registry["owners"]
         senior_secured_amount = registry["totalSeniorSecuredAmount"]
+        active_rights = registry["activeRights"]
     else:
         registry_owners = []
         senior_secured_amount = None
+        active_rights = []
 
     market_price_won = (
         property_info["marketPrice"] * _WON_PER_MANWON
@@ -127,7 +140,14 @@ def run_full_assessment(
         )
 
     identity_check = check_landlord_identity_match(contract_landlord_name, registry_owners)
-    tenancy_safety = {"depositPriorityRisk": deposit_risk, "landlordIdentityCheck": identity_check}
+    possession_gap_risk = check_possession_priority_gap_risk(move_in_date, active_rights)
+    fixed_date_risk = check_fixed_date_risk(has_fixed_date)
+    tenancy_safety = {
+        "depositPriorityRisk": deposit_risk,
+        "landlordIdentityCheck": identity_check,
+        "possessionPriorityGapRisk": possession_gap_risk,
+        "fixedDateRisk": fixed_date_risk,
+    }
 
     fraud_pattern_result = None
     building_info = property_info.get("building")

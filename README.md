@@ -431,10 +431,34 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       추가 배선 작업 없이 바로 동작.
 - [ ] 이 머신 자체의 vworld API 직접 접속 문제는 미해결 — 배포 서버(국내 리전)에서
       `POST /assessment`로 `estimated_from_public_price` 케이스까지 엔드투엔드 재검증 필요.
+- [x] 대항력 공백 위험(①) + 확정일자 미확보 위험(②) 룰 엔진 추가 — `tenancy_safety_rules.py`에
+      `check_possession_priority_gap_risk`/`check_fixed_date_risk` 신설,
+      `registry_summary_parser.py`가 각 권리의 `receivedDate`(접수일)까지 추출하도록 확장,
+      `overall_safety_assessment.py`/`full_assessment.py`/`api.py`(`move_in_date`,
+      `has_fixed_date` 필드) 전 구간 배선 완료. 날짜 경계값 테스트 다수 포함해 백엔드
+      테스트 176→201개, 전부 통과.
+- [ ] 최우선변제금(③, 소액임차인 보호) 계산은 의도적으로 보류 — 지역×시점별 정확한 법정
+      금액 테이블(여러 차례 개정, 기준일도 계약일이 아니라 등기부상 "가장 오래된 근저당권
+      설정일")이 필요한데, 확인 안 된 숫자를 채워넣으면 거짓 안심을 줄 위험이 있음. 검증된
+      데이터 출처를 확보하면 재착수.
+- [ ] 프론트엔드 Step1에 잔금일/확정일자 입력 필드 추가 + Step3에 대항력 타임라인 시각화
+      (백엔드 룰은 완성됐지만 프론트는 아직 이 값을 보내지 않음)
 - [ ] 실제 서버/클라우드에 배포 (배포 타깃 미정)
 
 ---
-**최근 업데이트**: 2026-09-15, VSCode Claude Code 세션 — VWorld 공시가격 연동 완료.
+**최근 업데이트**: 2026-09-14 후속 세션 — 대항력 공백 위험(①)/확정일자 미확보 위험(②)
+룰 엔진 추가. 임대차보호법상 대항력(전입신고 다음날 0시 발생)과 등기부 권리(접수 당일
+즉시 발생)의 타이밍 차이를 이용한 사기 패턴을 잡는 게 핵심 — 잔금(입주)일과 등기부 을구
+접수일이 정확히 같은 날이면 danger로 즉시 플래그. `registry_summary_parser.py`가 각
+권리의 접수일(`receivedDate`)을 추출하도록 먼저 확장한 뒤, `tenancy_safety_rules.py`에
+두 룰을 신설하고 `overall_safety_assessment.py`→`full_assessment.py`→`api.py`
+(`move_in_date`/`has_fixed_date` 필드)까지 전 구간 배선. 최우선변제금(③) 계산은 검증
+안 된 법정 금액 테이블을 채워넣는 위험 때문에 의도적으로 보류. 날짜 경계값(당일/하루
+전/하루 후/정보없음/형식오류) 테스트를 촘촘히 먼저 작성하는 방식으로 진행, 백엔드 테스트
+176→201개 전부 통과. 프론트엔드는 아직 이 값을 입력받지 않음(다음 단계).
+
+---
+**이전 업데이트**: 2026-09-15, VSCode Claude Code 세션 — VWorld 공시가격 연동 완료.
 키를 `.env`에 설정하고 검증하는 과정에서 처음 가정했던 엔드포인트(`req/data`
 GetFeature, WFS 계열)와 응답 형식(JSON)이 전부 틀렸다는 게 드러남 — 실제로는 전용
 엔드포인트(`ned/data/getApartHousingPriceAttr`)에 XML 응답이었다. 이 머신은 vworld

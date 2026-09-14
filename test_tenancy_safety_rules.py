@@ -6,9 +6,15 @@ import unittest
 
 from tenancy_safety_rules import (
     check_deposit_priority_risk,
+    check_fixed_date_risk,
     check_landlord_identity_match,
+    check_possession_priority_gap_risk,
     evaluate_tenancy_safety,
 )
+
+
+def right(right_type="근저당권설정", amount=100_000_000, received_date=None):
+    return {"rightType": right_type, "amount": amount, "receivedDate": received_date}
 
 
 class TestDepositPriorityRisk(unittest.TestCase):
@@ -139,6 +145,101 @@ class TestLandlordIdentityMatch(unittest.TestCase):
         self.assertEqual(result["riskLevel"], "unknown")
 
 
+class TestPossessionPriorityGapRisk(unittest.TestCase):
+    """
+    룰 3 날짜 경계값 테스트 — 대항력은 전입신고 익일 0시부터, 등기부 권리는 접수 당일부터
+    효력이 발생한다는 시간차를 정확히 경계에서 잡아내는지 집중적으로 검증한다.
+    """
+
+    def test_no_move_in_date_returns_unknown(self):
+        result = check_possession_priority_gap_risk(None, [right(received_date="2026-09-01")])
+        self.assertIsNone(result["gapRiskDetected"])
+
+    def test_invalid_move_in_date_format_returns_unknown(self):
+        result = check_possession_priority_gap_risk("2026/09/01", [])
+        self.assertIsNone(result["gapRiskDetected"])
+
+    def test_no_active_rights_is_not_risky(self):
+        result = check_possession_priority_gap_risk("2026-09-01", [])
+        self.assertFalse(result["gapRiskDetected"])
+
+    def test_right_received_exact_same_day_is_danger(self):
+        # 핵심 케이스: 잔금일 당일 접수 -> 등기 권리가 익일 0시보다 먼저 효력 발생 -> 위험
+        result = check_possession_priority_gap_risk(
+            "2026-09-01", [right(received_date="2026-09-01")]
+        )
+        self.assertTrue(result["gapRiskDetected"])
+        self.assertEqual(len(result["suspiciousRights"]), 1)
+
+    def test_right_received_one_day_before_is_not_flagged_by_this_rule(self):
+        # 잔금일 하루 전 접수 -> 이미 존재하던 채권(룰 1의 LTV 합계가 이미 반영) ->
+        # 이 룰이 잡으려는 "당일 타이밍 공백"은 아님
+        result = check_possession_priority_gap_risk(
+            "2026-09-01", [right(received_date="2026-08-31")]
+        )
+        self.assertFalse(result["gapRiskDetected"])
+
+    def test_right_received_long_before_is_not_flagged(self):
+        result = check_possession_priority_gap_risk(
+            "2026-09-01", [right(received_date="2020-01-15")]
+        )
+        self.assertFalse(result["gapRiskDetected"])
+
+    def test_right_received_one_day_after_is_not_flagged(self):
+        # 대항력 발생(9/2 0시)이 그날 낮에 접수되는 어떤 등기보다도 빠르므로 세입자가 우선
+        result = check_possession_priority_gap_risk(
+            "2026-09-01", [right(received_date="2026-09-02")]
+        )
+        self.assertFalse(result["gapRiskDetected"])
+
+    def test_right_received_long_after_is_not_flagged(self):
+        result = check_possession_priority_gap_risk(
+            "2026-09-01", [right(received_date="2027-01-01")]
+        )
+        self.assertFalse(result["gapRiskDetected"])
+
+    def test_only_same_day_rights_included_among_mixed_dates(self):
+        rights = [
+            right(right_type="근저당권설정", received_date="2026-08-31"),  # 전날 — 제외
+            right(right_type="전세권설정", received_date="2026-09-01"),     # 당일 — 포함
+            right(right_type="근저당권설정", received_date="2026-09-02"),   # 다음날 — 제외
+        ]
+        result = check_possession_priority_gap_risk("2026-09-01", rights)
+        self.assertTrue(result["gapRiskDetected"])
+        self.assertEqual(len(result["suspiciousRights"]), 1)
+        self.assertEqual(result["suspiciousRights"][0]["rightType"], "전세권설정")
+
+    def test_right_missing_received_date_is_ignored_not_crash(self):
+        result = check_possession_priority_gap_risk(
+            "2026-09-01", [right(received_date=None)]
+        )
+        self.assertFalse(result["gapRiskDetected"])
+
+    def test_reason_mentions_right_type_and_amount(self):
+        result = check_possession_priority_gap_risk(
+            "2026-09-01", [right(right_type="근저당권설정", amount=200_000_000, received_date="2026-09-01")]
+        )
+        self.assertIn("근저당권설정", result["reason"])
+        self.assertIn("200,000,000", result["reason"])
+        self.assertIn("2026-09-01", result["reason"])
+
+
+class TestFixedDateRisk(unittest.TestCase):
+
+    def test_none_is_unknown(self):
+        result = check_fixed_date_risk(None)
+        self.assertEqual(result["riskLevel"], "unknown")
+
+    def test_true_is_safe(self):
+        result = check_fixed_date_risk(True)
+        self.assertEqual(result["riskLevel"], "safe")
+
+    def test_false_is_warning(self):
+        result = check_fixed_date_risk(False)
+        self.assertEqual(result["riskLevel"], "warning")
+        self.assertIn("우선변제권", result["reason"])
+
+
 class TestEvaluateTenancySafetyIntegration(unittest.TestCase):
 
     def test_real_document_scenario(self):
@@ -166,6 +267,35 @@ class TestEvaluateTenancySafetyIntegration(unittest.TestCase):
             market_price_confidence="estimated_from_public_price",
         )
         self.assertTrue(result["depositPriorityRisk"]["priceIsEstimated"])
+
+    def test_new_rules_default_to_unknown_when_omitted(self):
+        # 기존 호출부(룰 3/4 도입 이전)가 새 파라미터를 안 넘겨도 깨지지 않고,
+        # 자동으로 위험 판정을 내려버리지 않고 unknown으로 남아야 한다.
+        result = evaluate_tenancy_safety(
+            market_price=600_000_000,
+            senior_secured_amount=300_000_000,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            registry_owners=[{"ownerName": "조춘근", "shareType": "단독소유"}],
+            property_type="multi_household",
+        )
+        self.assertIsNone(result["possessionPriorityGapRisk"]["gapRiskDetected"])
+        self.assertEqual(result["fixedDateRisk"]["riskLevel"], "unknown")
+
+    def test_possession_gap_and_fixed_date_wired_through(self):
+        result = evaluate_tenancy_safety(
+            market_price=600_000_000,
+            senior_secured_amount=300_000_000,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            registry_owners=[{"ownerName": "조춘근", "shareType": "단독소유"}],
+            property_type="multi_household",
+            move_in_date="2026-09-01",
+            active_rights=[right(received_date="2026-09-01")],
+            has_fixed_date=False,
+        )
+        self.assertTrue(result["possessionPriorityGapRisk"]["gapRiskDetected"])
+        self.assertEqual(result["fixedDateRisk"]["riskLevel"], "warning")
 
 
 if __name__ == "__main__":

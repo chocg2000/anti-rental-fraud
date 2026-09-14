@@ -7,11 +7,27 @@ import unittest
 from overall_safety_assessment import assess_overall_safety
 
 
-def make_tenancy_safety(deposit_risky=False, identity_level="safe"):
-    return {
+def make_tenancy_safety(
+    deposit_risky=False,
+    identity_level="safe",
+    gap_risk_detected=None,
+    fixed_date_risk_level=None,
+):
+    tenancy = {
         "depositPriorityRisk": {"riskyDepositPriority": deposit_risky, "reason": "테스트 사유"},
         "landlordIdentityCheck": {"riskLevel": identity_level, "reason": "테스트 사유"},
     }
+    if gap_risk_detected is not None:
+        tenancy["possessionPriorityGapRisk"] = {
+            "gapRiskDetected": gap_risk_detected,
+            "reason": "대항력 공백 테스트 사유",
+        }
+    if fixed_date_risk_level is not None:
+        tenancy["fixedDateRisk"] = {
+            "riskLevel": fixed_date_risk_level,
+            "reason": "확정일자 테스트 사유",
+        }
+    return tenancy
 
 
 class TestAssessOverallSafety(unittest.TestCase):
@@ -102,6 +118,47 @@ class TestAssessOverallSafety(unittest.TestCase):
         result = assess_overall_safety(tenancy)
         self.assertEqual(result["overallGrade"], "danger")
         self.assertTrue(any("공시가격 추정치" in r for r in result["reasons"]))
+
+    def test_possession_gap_risk_is_danger(self):
+        result = assess_overall_safety(make_tenancy_safety(gap_risk_detected=True))
+        self.assertEqual(result["overallGrade"], "danger")
+        self.assertTrue(any("대항력 공백" in r for r in result["reasons"]))
+
+    def test_possession_gap_risk_false_does_not_affect_grade(self):
+        result = assess_overall_safety(make_tenancy_safety(gap_risk_detected=False))
+        self.assertEqual(result["overallGrade"], "safe")
+
+    def test_possession_gap_risk_unknown_does_not_affect_grade(self):
+        # gapRiskDetected가 None(판단 불가)이면 등급에 영향을 주면 안 된다
+        tenancy = make_tenancy_safety()
+        tenancy["possessionPriorityGapRisk"] = {"gapRiskDetected": None, "reason": "정보 부족"}
+        result = assess_overall_safety(tenancy)
+        self.assertEqual(result["overallGrade"], "safe")
+
+    def test_fixed_date_missing_is_warning(self):
+        result = assess_overall_safety(make_tenancy_safety(fixed_date_risk_level="warning"))
+        self.assertEqual(result["overallGrade"], "warning")
+        self.assertTrue(any("확정일자" in r for r in result["reasons"]))
+
+    def test_fixed_date_safe_does_not_affect_grade(self):
+        result = assess_overall_safety(make_tenancy_safety(fixed_date_risk_level="safe"))
+        self.assertEqual(result["overallGrade"], "safe")
+
+    def test_fixed_date_unknown_does_not_affect_grade(self):
+        result = assess_overall_safety(make_tenancy_safety(fixed_date_risk_level="unknown"))
+        self.assertEqual(result["overallGrade"], "safe")
+
+    def test_new_signals_absent_do_not_break_existing_callers(self):
+        # possessionPriorityGapRisk/fixedDateRisk 키가 아예 없는 기존 호출부도 그대로 동작해야 함
+        result = assess_overall_safety(make_tenancy_safety())
+        self.assertEqual(result["overallGrade"], "safe")
+
+    def test_possession_gap_danger_outranks_lower_signals(self):
+        result = assess_overall_safety(
+            make_tenancy_safety(identity_level="caution", gap_risk_detected=True, fixed_date_risk_level="warning")
+        )
+        self.assertEqual(result["overallGrade"], "danger")
+        self.assertEqual(len(result["reasons"]), 3)
 
     def test_real_document_scenario_combined(self):
         # 실제 검증 문서 기준: 임대인 불일치(danger) + 깡통전세 위험(warning) 동시 발생

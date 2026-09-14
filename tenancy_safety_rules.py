@@ -1,14 +1,28 @@
 """
-전세사기 방지 핵심 룰 (설계문서 3.1절 LTV + 3.3절 임대인 리스크 연장)
+전세사기 방지 핵심 룰 (설계문서 3.1절 LTV + 3.3절 임대인 리스크 연장 + 대항력/우선변제권)
 ------------------------------------------------------------------------
-지금까지 만든 조각들을 실제 유저 판단에 쓰이는 두 가지 룰로 연결한다:
+지금까지 만든 조각들을 실제 유저 판단에 쓰이는 네 가지 룰로 연결한다:
 
 룰 1. 보증금보다 우선하는 선순위 채권액 계산 (을구 기반, 깡통전세 위험)
 룰 2. 소유주 일치 여부 검증 (갑구 기반, 신탁/대리인/법인 사기 방지)
   + 추가: 공유자(공동소유) 케이스 — 계약서 이름이 일치해도 공유자 전원 동의가 없으면
     계약이 무효화될 수 있어 별도로 경고해야 한다.
+룰 3. 대항력 발생의 시간적 공백(Gap) 위험 (주택임대차보호법 제3조)
+  전입신고+인도(대항력)는 신고 익일 0시부터 효력이 발생하지만, 등기부상 권리(근저당권 등)는
+  접수 당일 즉시 효력이 발생한다. 임대인이 잔금일 당일에 근저당권을 설정하면 그 권리가
+  세입자의 대항력보다 먼저 효력을 갖게 되어 보증금이 후순위로 밀린다 — 실제 전세사기에서
+  자주 쓰이는 수법이라 별도 룰로 분리해 날카롭게 잡아낸다 (룰 1의 LTV 합계 계산에도 이
+  채권이 포함되긴 하지만, "왜 위험한지"에 대한 설명은 안 해준다).
+룰 4. 확정일자 미부여 위험 (주택임대차보호법 제3조의2)
+  대항력이 있어도 확정일자가 없으면 경매 시 우선변제권(배당요구권) 자체가 발생하지 않는다.
+
+⚠️ 여기 포함 안 된 것: 최우선변제금(소액임차인 보호) 계산. 지역×시점별 정확한 법정
+금액 테이블(여러 차례 개정됨, 기준일도 계약일이 아니라 등기부상 "가장 오래된 근저당권
+설정일")이 필요한데, 확인 안 된 숫자를 채워넣으면 "보호받는다"는 거짓 안심을 줄 위험이
+있어 의도적으로 미룬다 — 국가법령정보센터 등에서 정확한 표를 확보한 뒤 별도 진행할 것.
 """
 
+from datetime import date as date_cls
 from typing import Literal
 
 RiskLevel = Literal["safe", "caution", "warning", "danger", "unknown"]
@@ -150,6 +164,102 @@ def check_landlord_identity_match(contract_landlord_name: str, registry_owners: 
     return {"match": True, "riskLevel": "safe", "reason": "계약서 임대인과 등기부 소유자가 일치합니다."}
 
 
+def check_possession_priority_gap_risk(
+    move_in_date: str | None,
+    active_rights: list[dict],
+) -> dict:
+    """
+    룰 3: 대항력 발생의 시간적 공백 위험.
+
+    전입신고(대항력)는 신고한 날의 "익일 0시"부터 효력이 발생하지만, 등기부상 권리는
+    접수된 "당일" 즉시 효력이 발생한다. 그래서 잔금 지급/입주(전입신고)일과 같은 날
+    접수된 근저당권 등이 있으면, 세입자의 대항력이 채 발생하기도 전에 그 권리가 먼저
+    선순위를 차지해버린다 — 계약 당일 임대인이 대출을 실행하는 전형적인 사기 수법.
+
+    하루라도 먼저(과거에) 접수된 권리는 이미 룰 1(선순위채권 합계)에 정직하게 반영돼
+    있으므로 여기서 다시 위험으로 잡지 않는다 — 이 룰이 잡아내는 건 "타이밍이 수상한"
+    바로 그 당일 접수 건만이다.
+
+    Args:
+        move_in_date: 계약서상 잔금 지급/입주(전입신고 예정)일 ("YYYY-MM-DD"). 아직 안
+            정했거나 입력 안 받았으면 None — 이 경우 판단 자체를 건너뛴다(unknown).
+        active_rights: RegistrySummaryParser의 activeRights (각 항목에 receivedDate 필요).
+    """
+    if not move_in_date:
+        return {
+            "gapRiskDetected": None,
+            "reason": "잔금(입주) 예정일 정보가 없어 대항력 공백 위험을 판단할 수 없습니다.",
+        }
+
+    try:
+        date_cls.fromisoformat(move_in_date)
+    except (ValueError, TypeError):
+        return {
+            "gapRiskDetected": None,
+            "reason": f"잔금(입주) 예정일 형식이 올바르지 않아 판단할 수 없습니다: {move_in_date!r}",
+        }
+
+    same_day_rights = [
+        r for r in active_rights if r.get("receivedDate") == move_in_date
+    ]
+
+    if not same_day_rights:
+        return {
+            "gapRiskDetected": False,
+            "reason": "잔금(입주)일 당일에 새로 접수된 권리가 발견되지 않았습니다.",
+        }
+
+    names = ", ".join(f"{r.get('rightType', '권리')}({r.get('amount', 0):,}원)" for r in same_day_rights)
+    return {
+        "gapRiskDetected": True,
+        "suspiciousRights": same_day_rights,
+        "reason": (
+            f"잔금(입주) 예정일({move_in_date}) 당일에 접수된 권리가 있습니다: {names}. "
+            "대항력은 전입신고 다음 날 0시부터 발생하지만 등기부상 권리는 접수 당일 즉시 "
+            "효력이 발생하므로, 해당 채권이 선순위가 되어 보증금이 보호받지 못할 위험이 "
+            "매우 높습니다 — 전입신고를 며칠 앞당기거나 계약을 재검토하세요."
+        ),
+    }
+
+
+def check_fixed_date_risk(has_fixed_date: bool | None) -> dict:
+    """
+    룰 4: 확정일자 미부여 위험.
+
+    대항력(전입신고+인도)이 있어도 확정일자를 안 받으면, 매물이 경매로 넘어갔을 때
+    법적으로 보증금을 우선 돌려받을 수 있는 "우선변제권" 자체가 발생하지 않는다.
+
+    Args:
+        has_fixed_date: 확정일자를 받았는지 여부.
+            None = 아직 안 물어봤음(유저 입력 자체가 없음) -> "unknown"으로 판단 보류.
+            False = 유저가 명시적으로 "아직 안 받았다"고 답함 -> "warning".
+            True = 받았다고 확인됨 -> "safe".
+            (완납증명서 체크의 None=건너뜀 vs False=명시적 미제출 구분과 같은 패턴.
+            None을 곧바로 경고로 처리하면 이 필드를 아직 안 물어보는 모든 기존 호출부가
+            갑자기 매번 경고를 받게 되므로 반드시 구분해야 한다.)
+    """
+    if has_fixed_date is None:
+        return {
+            "riskLevel": "unknown",
+            "reason": "확정일자 여부를 확인하지 못했습니다.",
+        }
+
+    if has_fixed_date:
+        return {
+            "riskLevel": "safe",
+            "reason": "확정일자가 부여되어 우선변제권 요건을 갖췄습니다.",
+        }
+
+    return {
+        "riskLevel": "warning",
+        "reason": (
+            "확정일자가 확인되지 않습니다 — 확정일자가 없으면 매물이 경매로 넘어가도 "
+            "법적으로 보증금을 우선 돌려받을 수 있는 우선변제권이 발생하지 않습니다. "
+            "계약 즉시 주민센터나 인터넷등기소에서 확정일자를 받으세요."
+        ),
+    }
+
+
 def evaluate_tenancy_safety(
     market_price: int | None,
     senior_secured_amount: int,
@@ -158,14 +268,21 @@ def evaluate_tenancy_safety(
     registry_owners: list[dict],
     property_type: str = "villa",
     market_price_confidence: str = "high",
+    move_in_date: str | None = None,
+    active_rights: list[dict] | None = None,
+    has_fixed_date: bool | None = None,
 ) -> dict:
-    """룰 1 + 룰 2를 합쳐서 한 번에 결과를 낸다."""
+    """룰 1~4를 합쳐서 한 번에 결과를 낸다."""
     deposit_risk = check_deposit_priority_risk(
         market_price, senior_secured_amount, my_deposit, property_type, market_price_confidence
     )
     identity_check = check_landlord_identity_match(contract_landlord_name, registry_owners)
+    possession_gap_risk = check_possession_priority_gap_risk(move_in_date, active_rights or [])
+    fixed_date_risk = check_fixed_date_risk(has_fixed_date)
 
     return {
         "depositPriorityRisk": deposit_risk,
         "landlordIdentityCheck": identity_check,
+        "possessionPriorityGapRisk": possession_gap_risk,
+        "fixedDateRisk": fixed_date_risk,
     }

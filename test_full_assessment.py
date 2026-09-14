@@ -259,6 +259,93 @@ class TestTaxClearanceWiring(unittest.TestCase):
         self.assertIn(result["overallGrade"], ("warning", "danger"))
 
 
+class TestPossessionGapAndFixedDateWiring(unittest.TestCase):
+    """
+    move_in_date/has_fixed_date가 tenancy_safety_rules의 새 두 룰까지 끊기지 않고
+    전달되는지 검증. YATAP_REGISTRY_OCR_TEXT의 전세권 접수일은 2025-03-26으로 고정.
+    """
+
+    @patch("full_assessment.get_property_info")
+    def test_move_in_same_day_as_registry_right_is_danger(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+            move_in_date="2025-03-26",
+        )
+
+        gap_risk = result["tenancySafety"]["possessionPriorityGapRisk"]
+        self.assertTrue(gap_risk["gapRiskDetected"])
+        self.assertEqual(result["overallGrade"], "danger")
+
+    @patch("full_assessment.get_property_info")
+    def test_move_in_different_day_is_not_flagged(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+            move_in_date="2025-04-01",
+        )
+
+        gap_risk = result["tenancySafety"]["possessionPriorityGapRisk"]
+        self.assertFalse(gap_risk["gapRiskDetected"])
+        self.assertEqual(result["overallGrade"], "safe")
+
+    @patch("full_assessment.get_property_info")
+    def test_move_in_date_omitted_gives_unknown_not_false_safety(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+        )
+
+        self.assertIsNone(result["tenancySafety"]["possessionPriorityGapRisk"]["gapRiskDetected"])
+
+    @patch("full_assessment.get_property_info")
+    def test_has_fixed_date_false_is_warning(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="서울 강남구 테헤란로 427",
+            target_area=84.99,
+            my_deposit=100_000_000,
+            contract_landlord_name="홍길동",
+            has_fixed_date=False,
+        )
+
+        self.assertEqual(result["tenancySafety"]["fixedDateRisk"]["riskLevel"], "warning")
+        self.assertIn(result["overallGrade"], ("warning", "danger"))
+
+    @patch("full_assessment.get_property_info")
+    def test_has_fixed_date_omitted_is_unknown_not_warning(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="서울 강남구 테헤란로 427",
+            target_area=84.99,
+            my_deposit=100_000_000,
+            contract_landlord_name="홍길동",
+        )
+
+        self.assertEqual(result["tenancySafety"]["fixedDateRisk"]["riskLevel"], "unknown")
+        self.assertEqual(result["overallGrade"], "safe")
+
+
 class TestRegistryCriticalKeywordsWiring(unittest.TestCase):
 
     @patch("full_assessment.get_property_info")

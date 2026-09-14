@@ -127,6 +127,40 @@ class TestAssessmentEndpoint(unittest.TestCase):
         self.assertEqual(body["overallGrade"], "danger")
 
     @patch("full_assessment.get_property_info")
+    def test_move_in_date_same_day_as_registry_right_is_danger(self, mock_get_info):
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+
+        response = client.post("/assessment", json=minimal_payload(
+            property_type="multi_household",
+            registry_ocr_text=YATAP_REGISTRY_OCR_TEXT,
+            move_in_date="2025-03-26",
+        ))
+
+        body = response.json()
+        self.assertTrue(body["tenancySafety"]["possessionPriorityGapRisk"]["gapRiskDetected"])
+        self.assertEqual(body["overallGrade"], "danger")
+
+    @patch("full_assessment.get_property_info")
+    def test_has_fixed_date_false_is_warning(self, mock_get_info):
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+
+        response = client.post("/assessment", json=minimal_payload(has_fixed_date=False))
+
+        body = response.json()
+        self.assertEqual(body["tenancySafety"]["fixedDateRisk"]["riskLevel"], "warning")
+        self.assertIn(body["overallGrade"], ("warning", "danger"))
+
+    @patch("full_assessment.get_property_info")
+    def test_move_in_date_and_fixed_date_omitted_are_unknown(self, mock_get_info):
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+
+        response = client.post("/assessment", json=minimal_payload())
+
+        body = response.json()
+        self.assertIsNone(body["tenancySafety"]["possessionPriorityGapRisk"]["gapRiskDetected"])
+        self.assertEqual(body["tenancySafety"]["fixedDateRisk"]["riskLevel"], "unknown")
+
+    @patch("full_assessment.get_property_info")
     def test_user_confirmed_violation_building_forces_danger(self, mock_get_info):
         mock_get_info.return_value = BASE_PROPERTY_INFO
 
