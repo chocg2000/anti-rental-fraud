@@ -300,7 +300,7 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
 
           {documents.fixedDateChoice === 'no' && (
             <div className="text-xs leading-relaxed text-gray-400">
-              확정일자가 없으면 경매로 넘어가도 보증금을 우선 돌려받는 우선변제권이 발생하지 않습니다 — 계약 즉시 주민센터나 인터넷등기소에서 받으세요.
+              확정일자는 계약을 체결해야 받을 수 있어 계약 전이라면 없는 게 정상입니다 — 계약 체결 당일 바로 주민센터나 인터넷등기소에서 받으세요.
             </div>
           )}
         </div>

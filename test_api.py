@@ -141,14 +141,16 @@ class TestAssessmentEndpoint(unittest.TestCase):
         self.assertEqual(body["overallGrade"], "danger")
 
     @patch("full_assessment.get_property_info")
-    def test_has_fixed_date_false_is_warning(self, mock_get_info):
+    def test_has_fixed_date_false_is_caution_not_warning(self, mock_get_info):
+        # 계약 전 진단이 주 사용 시나리오라 확정일자 미확보는 당연한 상태 — "caution"만
+        # 이어야 한다("warning"이면 거의 모든 진단에 경고가 뜬다).
         mock_get_info.return_value = BASE_PROPERTY_INFO
 
         response = client.post("/assessment", json=minimal_payload(has_fixed_date=False))
 
         body = response.json()
-        self.assertEqual(body["tenancySafety"]["fixedDateRisk"]["riskLevel"], "warning")
-        self.assertIn(body["overallGrade"], ("warning", "danger"))
+        self.assertEqual(body["tenancySafety"]["fixedDateRisk"]["riskLevel"], "caution")
+        self.assertIn(body["overallGrade"], ("caution", "warning", "danger"))
 
     @patch("full_assessment.get_property_info")
     def test_move_in_date_and_fixed_date_omitted_are_unknown(self, mock_get_info):

@@ -317,7 +317,9 @@ class TestPossessionGapAndFixedDateWiring(unittest.TestCase):
         self.assertIsNone(result["tenancySafety"]["possessionPriorityGapRisk"]["gapRiskDetected"])
 
     @patch("full_assessment.get_property_info")
-    def test_has_fixed_date_false_is_warning(self, mock_get_info):
+    def test_has_fixed_date_false_is_caution_not_warning(self, mock_get_info):
+        # 계약 전이면 확정일자가 없는 게 정상이라 "warning"이 아니라 "caution"이어야
+        # 한다(모든 사용자에게 매번 경고가 뜨면 안 됨) — tenancy_safety_rules.py 참고.
         mock_get_info.return_value = make_property_info(market_price=60_000)
 
         result = run_full_assessment(
@@ -328,8 +330,8 @@ class TestPossessionGapAndFixedDateWiring(unittest.TestCase):
             has_fixed_date=False,
         )
 
-        self.assertEqual(result["tenancySafety"]["fixedDateRisk"]["riskLevel"], "warning")
-        self.assertIn(result["overallGrade"], ("warning", "danger"))
+        self.assertEqual(result["tenancySafety"]["fixedDateRisk"]["riskLevel"], "caution")
+        self.assertIn(result["overallGrade"], ("caution", "warning", "danger"))
 
     @patch("full_assessment.get_property_info")
     def test_has_fixed_date_omitted_is_unknown_not_warning(self, mock_get_info):

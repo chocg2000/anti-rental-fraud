@@ -250,10 +250,14 @@ class TestFixedDateRisk(unittest.TestCase):
         result = check_fixed_date_risk(True)
         self.assertEqual(result["riskLevel"], "safe")
 
-    def test_false_is_warning(self):
+    def test_false_is_caution_not_warning(self):
+        # 이 앱은 "계약 전" 진단이 주 사용 시나리오다. 확정일자는 계약을 체결해야만
+        # 받을 수 있으므로 False는 거의 모든 정상 사용자에게 해당하는 당연한 상태 —
+        # "warning"(경고)으로 매번 뜨면 진짜 위험 신호의 신뢰도를 깎아먹는다.
         result = check_fixed_date_risk(False)
-        self.assertEqual(result["riskLevel"], "warning")
+        self.assertEqual(result["riskLevel"], "caution")
         self.assertIn("우선변제권", result["reason"])
+        self.assertIn("계약 전이라면 정상", result["reason"])
 
 
 class TestEvaluateTenancySafetyIntegration(unittest.TestCase):
@@ -311,7 +315,7 @@ class TestEvaluateTenancySafetyIntegration(unittest.TestCase):
             has_fixed_date=False,
         )
         self.assertTrue(result["possessionPriorityGapRisk"]["gapRiskDetected"])
-        self.assertEqual(result["fixedDateRisk"]["riskLevel"], "warning")
+        self.assertEqual(result["fixedDateRisk"]["riskLevel"], "caution")
 
 
 if __name__ == "__main__":

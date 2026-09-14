@@ -77,10 +77,14 @@ def assess_overall_safety(
         grade = _max_grade(grade, "danger")
         reasons.append(f"대항력 공백 위험 — {gap_risk.get('reason', '')}")
 
-    fixed_date_risk = tenancy_safety.get("fixedDateRisk", {})
-    if fixed_date_risk.get("riskLevel") == "warning":
-        grade = _max_grade(grade, "warning")
-        reasons.append(f"확정일자 미확인 — {fixed_date_risk.get('reason', '')}")
+    # 확정일자 미확보는 riskLevel이 기본 "caution"이다(계약 전이면 당연한 상태라 "warning"급
+    # 경고로 매번 띄우면 안 됨 — tenancy_safety_rules.check_fixed_date_risk 주석 참고).
+    # 다른 호출부가 더 높은 riskLevel을 넘기는 경우까지 대비해 identity_risk_level과 같은
+    # 패턴으로 실제 값 그대로 반영한다.
+    fixed_date_risk_level = tenancy_safety.get("fixedDateRisk", {}).get("riskLevel", "unknown")
+    if fixed_date_risk_level in ("caution", "warning", "danger"):
+        grade = _max_grade(grade, fixed_date_risk_level)
+        reasons.append(f"확정일자 미확인 — {tenancy_safety.get('fixedDateRisk', {}).get('reason', '')}")
 
     identity_check = tenancy_safety.get("landlordIdentityCheck", {})
     identity_risk_level = identity_check.get("riskLevel", "unknown")

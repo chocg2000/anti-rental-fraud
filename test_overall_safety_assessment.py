@@ -135,7 +135,18 @@ class TestAssessOverallSafety(unittest.TestCase):
         result = assess_overall_safety(tenancy)
         self.assertEqual(result["overallGrade"], "safe")
 
-    def test_fixed_date_missing_is_warning(self):
+    def test_fixed_date_caution_bumps_grade(self):
+        # check_fixed_date_risk가 실제로 돌려주는 기본 케이스: 확정일자 미확보는
+        # "caution"이다("warning"이 아님 — 계약 전이면 당연한 상태라서 매번 경고를
+        # 띄우면 실제 위험 신호의 신뢰도를 깎아먹기 때문. tenancy_safety_rules.py 참고).
+        result = assess_overall_safety(make_tenancy_safety(fixed_date_risk_level="caution"))
+        self.assertEqual(result["overallGrade"], "caution")
+        self.assertTrue(any("확정일자" in r for r in result["reasons"]))
+
+    def test_fixed_date_warning_level_still_escalates_to_warning(self):
+        # identity_risk_level과 동일한 패턴으로 실제 값을 그대로 반영하므로, 호출부가
+        # "warning"을 넘기면 (지금은 아니지만 미래에 다른 호출부가 그럴 수 있으니) 여전히
+        # warning으로 이어져야 한다 — 하드코딩된 "warning" 비교가 아니라는 걸 확인.
         result = assess_overall_safety(make_tenancy_safety(fixed_date_risk_level="warning"))
         self.assertEqual(result["overallGrade"], "warning")
         self.assertTrue(any("확정일자" in r for r in result["reasons"]))
