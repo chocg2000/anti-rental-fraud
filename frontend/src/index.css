@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  background: #f3f4f6;
+  color: #111827;
+}
+
+#root {
+  min-height: 100svh;
+}

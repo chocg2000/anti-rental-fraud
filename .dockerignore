@@ -1,0 +1,18 @@
+# 비밀키 — 절대 이미지에 구워넣지 않는다. docker-compose가 런타임에 환경변수로 주입한다.
+.env
+.env.*
+
+# 실제 개인정보가 담긴 테스트용 문서
+*.pdf
+
+# 로컬 전용 (Windows 포터블 tesseract/poppler 등)
+tools/
+
+# 백엔드 이미지 빌드엔 불필요 — frontend는 자체 Dockerfile/.dockerignore로 따로 빌드
+frontend/
+
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.md

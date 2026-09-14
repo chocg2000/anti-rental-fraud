@@ -1,0 +1,19 @@
+# API 레이어 (api.py) 의존성
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic==2.13.5
+python-multipart  # POST /registry/upload의 파일 업로드(multipart/form-data)에 필요
+python-dotenv     # 로컬 .env(KAKAO_REST_API_KEY 등)를 환경변수로 로드
+
+# test_api.py의 TestClient가 필요로 함
+httpx==0.28.1
+
+# registry_summary_ocr.py(POST /registry/upload가 호출)를 실제로 돌릴 때 필요.
+# tesseract/poppler는 pip 패키지가 아니라 시스템 실행파일(subprocess로 직접 호출) —
+#   Ubuntu/Debian: sudo apt-get install tesseract-ocr tesseract-ocr-kor poppler-utils
+#   Windows: 관리자 권한 없이 포터블 설치 후 .env에 TESSERACT_CMD/PDFTOPPM_CMD/PDFINFO_CMD로
+#            전체 경로 지정 (실제 검증 완료 — README "Tesseract/Poppler 실환경 검증" 참고)
+pdfplumber
+
+# address_resolver.py / real_transaction_price_adapter.py / building_register_adapter.py
+requests

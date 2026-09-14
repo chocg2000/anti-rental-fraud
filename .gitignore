@@ -1,0 +1,20 @@
+# 비밀키/환경변수 — 절대 커밋 금지
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 실제 개인정보가 담긴 테스트용 문서 (등기부등본 등)
+*.pdf
+
+# 포터블 tesseract/poppler 바이너리 (관리자 권한 없이 설치, .env로 경로만 참조)
+tools/
+
+# Node / frontend는 frontend/.gitignore에서 별도 관리
+
+# Claude Code 세션 내부 상태 (프로젝트 소스 아님)
+.claude/

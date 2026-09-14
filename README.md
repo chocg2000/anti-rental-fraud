@@ -1,0 +1,440 @@
+# 전세/월세 사기 방지 앱 — 프로젝트 현황
+
+> 이 파일은 claude.ai 채팅과 VSCode의 Claude Code, 두 세션을 오가며 작업할 때
+> "지금까지 뭘 했고, 뭐가 남았는지"를 공유하기 위한 문서입니다.
+> **작업 세션을 마칠 때마다 이 파일의 "최근 업데이트"와 "다음 단계"를 갱신해주세요.**
+
+---
+
+## 컨셉
+
+전세/월세 계약 전, 주소와 계약 조건(보증금·임대인 이름)을 입력하면
+등기부등본·실거래가·건축물대장 데이터를 종합해 위험도(안전/주의/경고/위험)를
+알려주는 1단계 B2C 무료 웹/앱. (로드맵: 1단계 B2C 무료 → 2단계 공인중개사 영업 → 3단계 SaaS/API)
+
+## 아키텍처 (데이터 흐름)
+
+```
+주소 입력
+  ├─ address_resolver.py (카카오 API) → 법정동코드/PNU/좌표
+  ├─ real_transaction_price_adapter.py (국토부) → 실거래가
+  │     └─ market_price_estimator.py → 시세 추정 (중위값, 같은동→자치구 확대, 공시가격 폴백)
+  └─ building_register_adapter.py (국토부 건축HUB) → 건물정보, 근생빌라 탐지
+        └─ property_aggregator.py 가 위 3개를 병렬 호출 + 부분실패 허용
+
+등기부등본 PDF 업로드
+  ├─ registry_summary_ocr.py → PDF에서 '요약 페이지' 자동 탐지 + OCR
+  └─ registry_summary_parser.py → 소유자, 선순위채권(근저당+전세권) 합계 파싱
+  (registry_parser.py: 본문 갑구/을구 파싱 로직은 완성됐으나, 실제 데이터 확보
+   경로는 미해결 — 아래 "미해결 이슈" 참고)
+
+계약 조건 입력 (보증금, 임대인 이름, 완납증명서 여부)
+  ├─ tenancy_safety_rules.py → 깡통전세 위험 + 임대인 일치 검증
+  ├─ tax_clearance_check.py → 완납증명서 제출여부/명의/발급일 체크
+  └─ fraud_pattern_rules.py → 신축빌라+소유주변경 패턴 (이력 데이터 필요, 아래 참고)
+
+           ↓ 위 결과를 전부 모아서
+overall_safety_assessment.py → 최종 신호등 등급(safe/caution/warning/danger)
+
+           ↑ 위 전체 흐름을 하나로 묶는 오케스트레이터
+full_assessment.py → run_full_assessment(address, target_area, my_deposit,
+    contract_landlord_name, ...) 하나만 호출하면 등급까지 나옴
+
+           ↑ 이걸 JSON으로 노출하는 API 레이어
+api.py (FastAPI) → POST /assessment (결과를 id로 인메모리 저장) , GET /health
+                   GET /assessment/{id} → 저장된 결과 재조회 (새로고침/링크공유 대응)
+                   POST /registry/upload → PDF 업로드 → OCR+파싱 미리보기만 반환
+                   (진단 실행 안 함 — 유저가 확인/보정 후 그 텍스트로 /assessment 호출)
+
+           ↑ 이걸 호출하는 프론트엔드 (react-router-dom 라우팅)
+frontend/ → /step1(Step1Address) → /step2(Step2Documents) → /result/:id(ResultRoute→Step3Result)
+    Step1/Step2 입력값은 sessionStorage에도 저장 — 새로고침해도 폼이 안 날아감
+    /result/:id는 새로고침·직접 접속 시 GET /assessment/:id로 백엔드에서 다시 불러옴
+```
+
+## 실행
+
+백엔드:
+```bash
+pip install -r requirements.txt
+uvicorn api:app --reload      # http://127.0.0.1:8000/docs 에서 Swagger UI로 바로 테스트 가능
+```
+
+프론트엔드 (별도 터미널):
+```bash
+cd frontend
+npm install
+npm run dev                   # http://localhost:5173 — /api/* 요청은 vite.config.js 프록시로
+                               # http://127.0.0.1:8000 (백엔드)에 전달됨. 백엔드를 먼저 띄울 것.
+```
+
+## 테스트
+
+```bash
+python run_all_tests.py   # 전체 test_*.py 자동 탐색 후 실행
+```
+2026-09-13 기준 **146개 테스트 전부 통과**.
+
+## 완료된 모듈
+
+| 파일 | 역할 | 검증 상태 |
+|---|---|---|
+| `address_resolver.py` | 주소 → 법정동코드/PNU (카카오 API) | ✅ 실제 키로 검증 |
+| `real_transaction_price_adapter.py` | 국토부 실거래가 조회 | ✅ 실제 데이터로 검증, 버그 2개 수정 이력 있음 |
+| `market_price_estimator.py` | 시세 추정 (동→구 확대, 공시가격 폴백 포함) | ✅ 실제 데이터로 검증 |
+| `building_register_adapter.py` | 건축물대장(건축HUB) 조회, 근생빌라 탐지 | ✅ 실제 데이터로 검증, 버그 3개 수정 이력 있음 |
+| `property_aggregator.py` | 실거래가/건축물대장/공시가격 병렬 호출 + 부분실패 허용 | ✅ |
+| `public_price_adapter.py` | 브이월드 공동주택 공시가격 조회 | ⚠️ 스텁 — 응답 구조 미검증(아래 참고) |
+| `registry_parser.py` | 등기부 본문(갑구/을구) 파싱 로직 | ✅ 로직 완성 (실제 데이터 확보 경로는 미해결) |
+| `registry_summary_parser.py` / `registry_summary_ocr.py` | 등기부 요약 페이지 OCR+파싱 | ✅ 실제 PDF로 엔드투엔드 검증 (Windows 포함) |
+| `fraud_pattern_rules.py` | 신축빌라+소유주변경 탐지 | ✅ 로직 완성 (이력 데이터 확보 경로는 미해결) |
+| `tenancy_safety_rules.py` | 깡통전세 위험 + 임대인 일치(법인/신탁/공유자 구분) | ✅ |
+| `tax_clearance_check.py` | 완납증명서 체크 | ✅ |
+| `overall_safety_assessment.py` | 종합 신호등 등급 산출 | ✅ |
+| `test_e2e_pipeline.py` / `e2e_fixtures.py` | 실제 데이터 스냅샷 기반 엔드투엔드 회귀 테스트 | ✅ |
+| `full_assessment.py` | 위 9개 모듈을 실제 흐름대로 호출하는 오케스트레이터 (`run_full_assessment`) | ✅ 배선 테스트 10개 통과 |
+| `api.py` | FastAPI 레이어 — `POST/GET /assessment`, `POST /registry/upload`, `GET /health` | ✅ 계약 테스트 20개 통과 |
+| `frontend/` | React+Vite+Tailwind 실제 화면, react-router-dom 라우팅 (Step1/2/Result) | ✅ 백엔드와 실제 연동 확인 (아래 참고) |
+
+## 알려진 사실 / 설계 결정 (실제 데이터로 검증하며 확정된 것들)
+
+- **위반건축물 여부는 API로 자동화 불가능** (국토부가 공식적으로 비공개, 분쟁조정 사례로 확인됨)
+  → 유저 자기확인 체크리스트 항목으로 재분류 필요
+- **등기부등본 PDF는 이미지 스캔본**이라 OCR 필요. 본문(갑구/을구)은 배경무늬 때문에
+  OCR 정확도가 낮지만, **"주요 등기사항 요약" 페이지는 배경무늬가 적어 정확도가 훨씬 좋음**
+  → 그래서 요약 페이지 기반 파서(`registry_summary_parser.py`)를 주력으로 채택
+- **전세권설정도 근저당권처럼 선순위채권으로 계산해야 함** (실제 문서로 발견, 요약 페이지가
+  근저당권+전세권을 같이 보여줘서 자연스럽게 해결됨)
+- 완납증명서는 체납액 자체가 안 적힌 서류라, "체납액 합산"이 아니라
+  "제출여부/명의일치/발급일 최신성" 체크로 스코프 조정함
+- **`property_aggregator`의 marketPrice(만원 단위)와 `tenancy_safety_rules`가 기대하는
+  금액(원 단위)이 서로 다른 단위였음** — 오케스트레이터를 만들면서 발견. 변환 안 하면
+  시세가 1만 배 작게 들어가 깡통전세 위험 판정이 완전히 틀어짐. `full_assessment.py`에서만
+  변환 처리하고, 개별 모듈은 그대로 둠.
+- **`address_resolver.py`가 `KAKAO_REST_API_KEY` 미설정 시 크래시하던 버그 수정** — 실제로
+  프론트엔드를 붙여서 서버를 처음 띄워보다가 발견됨. 기존엔 키가 없으면 한글이 포함된
+  플레이스홀더 문자열("여기에_발급받은_REST_API_키를_입력")을 그대로 HTTP `Authorization`
+  헤더에 넣었는데, HTTP 헤더는 latin-1만 허용해서 `UnicodeEncodeError`가 `AddressResolutionError`로
+  안 잡히고 그대로 500으로 터졌음. 기본값을 `None`으로 바꿔 정상적으로 401 → `AddressResolutionError`
+  → `overallGrade="error"` 경로를 타도록 수정. (지금까지 전 구간이 모킹 테스트였어서 이 경로를
+  아무도 실제로 밟아본 적이 없었음 — 실제 통합 실행이 왜 중요한지 보여주는 사례.)
+- **공공데이터포털(data.go.kr) 키는 계정당 하나(일반 인증키)를 여러 API에 공통으로 씀** —
+  API마다 별도 키가 아니라 API별로 "활용신청" 승인만 따로 받으면 됨. `MOLIT_SERVICE_KEY` 하나로
+  실거래가(`RTMSDataSvcAptTradeDev`)와 건축HUB(`BldRgstHubService`) 둘 다 인증.
+- **`SERVICE_KEY_IS_NOT_REGISTERED_ERROR`(reason code 30)가 떴을 때 승인 상태가 멀쩡해도
+  키 값 자체가 틀렸을 수 있음** — 실제로 마이페이지에서 인증키를 다시 복사해서 넣었더니
+  해결됨(87자→88자로 길이가 달랐음, 최초 값이 잘못 복사됐던 것). 이 에러가 뜨면 활용신청
+  승인 여부보다 키 값 자체(복사 버튼으로 재복사)부터 의심할 것.
+
+## 실제 API 키로 검증 완료 (2026-09-13)
+
+로컬 `.env`(git 미추적)에 `KAKAO_REST_API_KEY` + `MOLIT_SERVICE_KEY`를 설정하고
+`POST /assessment`를 프론트엔드→프록시→백엔드 전 구간으로 실제 호출해 확인함:
+- 카카오 주소 검색: 실제 지번주소/PNU/좌표 정상 반환
+- 국토부 실거래가: `resultCode 000`, 실제 거래 데이터 기준 시세 산출 (신뢰도 "high")
+- 건축HUB 건축물대장: `resultCode 00`, 실제 건물 정보(용도/사용승인일 등) 반환
+- 위 세 값을 조합해 `overallGrade`까지 실제로 산출되는 것 확인 (예: 업무시설 건물 →
+  `nonResidentialUseRisk` 플래그 → `warning` 등급)
+
+이제 남은 미확보 데이터는 등기부등본(유저 PDF 업로드 필요)과 공시가격(vworld, 아래 이슈 1번)뿐.
+
+## Tesseract/Poppler 실환경 검증 완료 (2026-09-14, Windows)
+
+관리자 권한 없이 포터블 방식으로 설치 후, 실제 등기부등본 PDF(프로젝트 루트의
+`등기부등본_내아파트.pdf`, `.gitignore`로 제외된 개인 파일)로 `POST /registry/upload`까지
+전 구간 검증 완료.
+
+**설치 방법** (choco는 관리자 권한이 없어 "installed 0/0 packages"로 실패 — 포터블
+방식으로 전환):
+- Poppler: [oschwartz10612/poppler-windows](https://github.com/oschwartz10612/poppler-windows)
+  릴리스 zip을 `tools/poppler/`에 압축 해제 (설치 불필요, 그냥 실행파일)
+- Tesseract: [UB-Mannheim/tesseract](https://github.com/UB-Mannheim/tesseract) 설치파일을
+  `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-` 옵션으로 조용히 설치 (`/CURRENTUSER`
+  플래그를 같이 주면 GUI 다이얼로그가 뜨면서 멈춤 — 빼야 진짜 조용히 진행됨). 기본 개인
+  설치 경로(`%LOCALAPPDATA%\Programs\Tesseract-OCR`)에 관리자 권한 없이 설치됨.
+- `tools/`는 `.gitignore` 처리 — 바이너리를 git에 올리지 않고, `.env`의 경로로만 참조.
+
+**코드 변경**: `registry_summary_ocr.py`가 원래 `pdfinfo`/`pdftoppm`/`tesseract`를 PATH에
+있다고 가정하고 바로 호출했는데(pytesseract/pdf2image 같은 파이썬 래퍼는 애초에 안 씀 —
+subprocess로 CLI 직접 호출), Windows는 이 실행파일들이 PATH에 자동 등록 안 되는 경우가
+많아서 `TESSERACT_CMD`/`PDFTOPPM_CMD`/`PDFINFO_CMD` 환경변수로 전체 경로를 오버라이드할
+수 있게 고침 (기본값은 그대로 bare 명령어라 Ubuntu 배포 환경엔 영향 없음).
+
+**실제로 두 개의 새 버그를 발견/수정함**:
+1. **인코딩 버그** — `subprocess.run(..., text=True)`에 `encoding`을 명시 안 하면 플랫폼
+   기본 인코딩을 쓰는데, Windows는 그게 cp949라 tesseract/poppler의 UTF-8 출력을 디코딩
+   하다 `UnicodeDecodeError`로 크래시함. 지금까지 이 경로가 리눅스/WSL에서만 검증됐어서
+   (기본 로케일이 UTF-8) 안 드러났던 버그. `encoding="utf-8", errors="replace"`로 수정 —
+   `errors="replace"`가 필요한 이유는 포플러 Windows 빌드가 콘솔 출력 중 일부(파일 경로 등)를
+   로컬 코드페이지로 섞어 내보내기도 해서, 순수 UTF-8 강제 디코딩만으로는 다른 지점에서
+   또 깨졌기 때문 (우리가 정규식으로 뽑는 "Pages: N"은 항상 ASCII라 무관하게 안전함).
+2. **`.env` 편집 실수** — 기존 `.env` 파일 끝에 줄바꿈이 없는 상태에서 새 줄을 이어붙였다가
+   `MOLIT_SERVICE_KEY` 값 뒤에 `TESSERACT_CMD=...`가 그대로 붙어버려 키가 오염된 적이 있음.
+   `.env`를 스크립트로 append할 땐 파일이 개행으로 끝나는지 먼저 확인할 것.
+
+**검증 결과**: OCR이 요약 페이지(9번째 페이지)를 정확히 찾았고, 파싱된 값(소유자 "조춘근",
+전세권 300,000,000원)이 그동안 `e2e_fixtures.py`에서 써온 실제 야탑동 데이터와 정확히
+일치함 — 이 PDF가 바로 그 원본이었음. 터미널에 한글이 깨져 보이는 건 이 Windows 콘솔
+(cp949)의 표시 문제일 뿐, JSON 응답 자체는 UTF-8 바이트 단위로 검증해서 정확함을 확인함.
+
+## 미해결 이슈 (다음 세션에서 이어갈 것들)
+
+1. **공시가격 API 미연결** — WMS/WFS(브이월드) 기반이라 방식이 다름. vworld.kr 자체가
+   싱가포르 IP에서 접속 제한돼서 국내 지인에게 키 발급/데이터 조회를 요청해둔 상태
+   (2026-09-14 기준 대기 중). **키를 못 받은 채로 스텁 코드는 미리 준비해둠** — 아래
+   "VWorld 공시가격 연동 스텁" 섹션 참고. 키가 오면 `.env`에 붙여넣고
+   `debug_vworld_call.py`부터 돌리면 바로 이어서 진행 가능.
+2. **등기부 본문(갑구) 소유권 이전 이력 확보 경로 미해결** — `registry_parser.py`와
+   `fraud_pattern_rules.py`(신축빌라+소유주변경 룰) 로직은 완성됐지만, 본문 OCR 정확도가
+   낮아서 실제 이력 데이터를 안정적으로 못 가져오는 상태. 상용 OCR API(네이버 CLOVA,
+   Upstage 등) 도입 검토 필요.
+3. ~~PDF 업로드 서버에 tesseract/poppler 미설치~~ → **2026-09-14 실환경(Windows) 검증
+   완료** (아래 "Tesseract/Poppler 실환경 검증" 섹션 참고). 다만 이건 개발 머신(Windows)
+   검증이고, 실제 배포 서버(Ubuntu/Debian 예정)에서는 `sudo apt-get install tesseract-ocr
+   tesseract-ocr-kor poppler-utils`로 다시 한번 확인 필요 — PATH 자동 등록되는 환경이라
+   `.env`의 `TESSERACT_CMD` 등은 안 넣어도 기본값(`"tesseract"`)으로 바로 동작할 것으로 예상.
+
+## `full_assessment.py` 인터페이스 계약 (오케스트레이터 완성, 2026-09-13)
+
+`run_full_assessment(address, target_area, my_deposit, contract_landlord_name, ...)` 하나로
+전체 흐름(주소 정규화 → 시세/건축물대장 → 등기부 요약 → 임대인/깡통전세 검증 → 사기패턴 →
+완납증명서 → 종합등급)을 실행한다.
+
+- **필수**: `address`, `target_area`, `my_deposit`(원 단위), `contract_landlord_name`
+- **선택**: `registry_summary_text`(없으면 깡통전세/임대인일치 둘 다 "unknown"),
+  `tax_clearance`(아예 안 주면 체크 자체를 건너뜀 — `submitted: False`를 명시적으로 주는 것과 다름),
+  `ownership_history`, `registry_critical_keywords`, `property_type`
+- **유저 자가확인 필수**: `user_confirmed_violation_building` — 건축물대장 API가 절대
+  안 주는 값이라 True로만 들어오면 무조건 danger로 강제됨
+- **출력**: `overallGrade`(safe/caution/warning/danger/**error**) + `reasons` +
+  `propertyInfo`/`tenancySafety`/`fraudPatternResult`/`taxClearanceResult` 원본 그대로 포함
+  (프론트가 세부 사유를 보여줘야 할 때 재조합할 필요 없게 함). 주소 정규화 자체가
+  실패하면 나머지 조회 없이 `overallGrade="error"`로 즉시 반환.
+- 테스트: `test_full_assessment.py` (10개, 배선/단위변환/부재값 처리만 검증 — 개별 룰
+  로직은 각 모듈 자체 테스트가 이미 커버함)
+
+## `api.py` 인터페이스 계약 (FastAPI 레이어 완성, 2026-09-13)
+
+`POST /assessment`가 `full_assessment.run_full_assessment()`를 그대로 JSON으로 노출한다
+(새 비즈니스 로직 없음 — 요청/응답 스키마 검증과 에러 핸들링만 담당).
+
+- Request body 필드명은 `run_full_assessment`의 Python 파라미터명과 1:1 대응 (스네이크케이스),
+  단 등기부 텍스트만 `registry_ocr_text`로 명명(내부적으로 `registry_summary_text`에 매핑).
+- `extra="forbid"` — 계약에 없는 필드를 보내면 조용히 무시되지 않고 422로 바로 드러남.
+- `target_area > 0`, `my_deposit > 0`, `property_type`은 4개 값 중 하나만 허용 등 Pydantic
+  단에서 검증 — 잘못된 요청은 비즈니스 로직까지 가지 않고 422에서 걸러짐.
+- 주소 정규화 실패 같은 "예상된" 실패는 HTTP 200 + `overallGrade="error"`로 내려감
+  (요청 자체는 유효했으므로). 예상 못 한 예외만 전역 핸들러가 500 + 안전한 메시지로 변환
+  (스택트레이스는 서버 로그에만 남고 응답 바디에는 안 실림).
+- 테스트: `test_api.py` (20개 — 요청 검증, 필드 매핑, 에러 핸들링, 결과 재조회까지 검증)
+
+### `GET /assessment/{id}` — 진단 결과 재조회 (2026-09-14 추가)
+
+`POST /assessment`가 계산한 결과를 응답에 `id`를 붙여서 그대로 인메모리 딕셔너리
+(`_ASSESSMENT_STORE`)에 저장해두고, 같은 `id`로 다시 꺼내볼 수 있게 한다. 프론트가 결과
+화면을 `/result/:id`로 라우팅해서, 새로고침하거나 링크를 다른 사람에게 공유해도 같은
+결과를 다시 보여줄 수 있게 하기 위함 — 반대로 Step1/Step2의 "입력 폼"은 서버에 저장할
+이유가 없어서(재현 대상이 아님) 그건 프론트 쪽 sessionStorage로만 처리한다(아래 참고).
+
+⚠️ **지금은 프로토타입 수준 저장소다** — 프로세스 메모리에만 있어서 서버 재시작하면
+전부 사라지고, uvicorn을 여러 워커로 띄우면 워커마다 따로 논다. 실사용 전엔 Redis나
+DB 같은 공유 저장소로 바꿔야 한다. 없는 `id`로 조회하면 404.
+
+### `POST /registry/upload` — 등기부 PDF 업로드 (분리 엔드포인트)
+
+`/assessment`와 의도적으로 분리했다. 이유:
+1. 무거운 OCR 연산(tesseract/poppler subprocess 호출)을 메인 진단 로직과 격리
+2. OCR 오탐지에 대한 사람 확인 버퍼 — 이 엔드포인트는 **진단을 실행하지 않고** 파싱
+   미리보기(`registryOcrText`, `owners`, `activeRights`, `totalSeniorSecuredAmount`)만
+   반환한다. 유저가 화면에서 텍스트를 확인/수정한 뒤, 그 텍스트를 `/assessment`의
+   `registry_ocr_text`에 담아 다시 호출하는 게 다음 단계.
+
+에러 처리: PDF가 아니거나(확장자/`content-type` 둘 다 아님), 15MB 초과, 빈 파일이면 OCR을
+아예 돌리지 않고 즉시 400. `find_and_parse_summary_page`가 요약 페이지를 못 찾아
+`RuntimeError`를 던지면(서버 버그가 아니라 "이 PDF엔 요약 페이지가 없거나 인식이 안 됐다"는
+사용자 입력 문제) 500이 아니라 400으로 변환해서 돌려준다.
+
+## UI 와이어프레임 (2026-09-13, Claude Design 캔버스)
+
+3단계 모바일 유저 플로우 와이어프레임: https://claude.ai/code/artifact/c56fe037-19b4-4277-bd81-3fdf873f1faa
+
+- **Step 1 — 주소·계약조건**: `POST /assessment`의 필수 필드(address, target_area,
+  my_deposit, contract_landlord_name, property_type)를 그대로 입력 폼으로 매핑.
+- **Step 2 — 서류 확인·자가진단**: 위반건축물 자가진단(필수, 두 옵션 중 하나를 고르기 전엔
+  하단 "진단 시작하기" 버튼이 비활성 상태로 보임 — `user_confirmed_violation_building`),
+  등기부 PDF 업로드(선택 — `POST /registry/upload` 흐름을 idle → uploading(스피너) →
+  uploaded(OCR 텍스트/소유자 이름 편집 가능한 미리보기) 3단계로 시뮬레이션, 실패 시
+  화면 상단 토스트 알림 후 idle로 복귀), 완납증명서 제출여부 토글.
+- **Step 3 — 진단 결과**: "예시 등급" 칩으로 5개 grade(safe/caution/warning/danger/error)를
+  전환하며 신호등 색상·아이콘·판단 근거·세부 카드(매물정보/깡통전세위험/임대인일치/
+  사기패턴/완납증명서)가 통째로 바뀌는 걸 확인 가능. 각 카드는 클릭해서 펼치고 접을 수 있음.
+
+**와이어프레임 단계에서 확정된 UX 규칙** (구현 시 그대로 반영할 것):
+- 등기부 PDF 업로드는 선택 항목이므로, 업로드 실패(400)나 아예 업로드하지 않은 경우에도
+  하단 "진단 시작하기" 버튼은 절대 막지 않는다 — 버튼 비활성화는 위반건축물 자가진단
+  (필수 항목) 여부에만 반응한다. `registry_ocr_text`가 비어도 백엔드가 `unknown`으로
+  안전하게 처리하는 것과 대응됨.
+- PDF 분석은 tesseract/poppler subprocess로 수 초 걸리는 블로킹 작업이므로, idle과
+  uploaded 사이에 반드시 별도의 로딩 상태(스피너 + 파일 재선택 버튼 숨김)가 필요하다.
+
+위 와이어프레임은 이제 `frontend/`에 실제 코드로 구현됨 (아래 섹션 참고).
+
+## `frontend/` 실제 구현 (React + Vite + Tailwind CSS v4, 2026-09-13)
+
+와이어프레임의 3단계 흐름을 실제 코드로 옮김. 프레임워크는 React+Vite+Tailwind로 결정
+(이유: 이 진단 도구는 입력 후에만 결과가 나오는 구조라 SSR/SEO 이점이 없고, Next.js가
+필요해질 랜딩페이지는 나중에 별도 정적 페이지로 붙이는 게 더 간단하다고 판단).
+
+- `src/steps/Step1Address.jsx` / `Step2Documents.jsx` / `Step3Result.jsx` — 와이어프레임
+  3화면 그대로 구현. `App.jsx`가 단계 전환과 폼 상태를 관리.
+- `src/lib/api.js` — `POST /assessment`, `POST /registry/upload` 실제 fetch 호출
+  (`vite.config.js`의 `/api` 프록시가 `http://127.0.0.1:8000`으로 전달).
+- **와이어프레임과 실제 구현의 차이 하나**: 와이어프레임엔 등기부 소유자 이름을 별도
+  input으로 수정하는 필드가 있었는데, 실제로는 `/assessment`가 `registry_ocr_text` 원문
+  하나만 받아서 서버에서 다시 파싱하는 구조라, 소유자 이름 필드만 따로 수정해도 서버에
+  반영이 안 되는 이중 소스 문제가 생김. 그래서 구현에서는 OCR 텍스트 textarea 하나만
+  편집 가능하게 하고, 소유자/권리 목록은 "최초 인식 결과(참고용)"로 읽기 전용 표시함.
+- Step2의 PDF 업로드는 이제 시뮬레이션이 아니라 실제 `POST /registry/upload` 호출 —
+  이 개발 환경엔 tesseract/poppler가 없어 실제로 올리면 서버가 500을 내겠지만, 로딩/에러
+  토스트 UI 흐름 자체는 정상 작동 확인.
+- **실제 백엔드를 처음 띄워서 프론트와 연동하다가 `address_resolver.py`의 진짜 버그를
+  발견하고 수정함** (위 "알려진 사실" 섹션 참고). `KAKAO_REST_API_KEY` 없이도 이제
+  `overallGrade: "error"`로 깨끗하게 응답하는 것까지 curl로 실제 확인함.
+- 이어서 `KAKAO_REST_API_KEY` + `MOLIT_SERVICE_KEY`를 `.env`에 실제로 설정하고 프론트→
+  프록시→백엔드 전 구간을 실제 API로 검증 완료 (위 "실제 API 키로 검증 완료" 섹션 참고).
+- **카카오(다음) 주소검색 팝업 연동 완료** (2026-09-14) — `src/components/AddressSearchModal.jsx`가
+  다음(Daum) 우편번호 서비스 임베드 스크립트(`t1.daumcdn.net/.../postcode.v2.js`)를 동적으로
+  로드해 모달로 띄운다. **주의**: 이건 무료 서비스라 API 키가 필요 없고, 백엔드가 쓰는 카카오
+  로컬 REST API(주소→PNU 변환)와는 완전히 별개다 — 이 팝업이 된다고 백엔드 카카오 키가
+  검증되는 게 아니다(그건 이미 어제 별도로 검증 완료). 주소 선택 후 "상세주소(동/호수)"
+  선택 입력 필드가 나타나고, 최종 제출 시 `address` 필드에 합쳐서 보낸다.
+- **라우팅(`react-router-dom`) + 세션 지속성 도입 완료** (2026-09-14) — `/step1` →
+  `/step2` → `/result/:id` 세 경로로 나눔. 두 계층으로 새로고침/공유에 대응:
+  - **Step1/Step2 (입력 폼)**: `src/lib/sessionState.js`가 `form`/`documents` state를
+    sessionStorage에 저장 — 같은 브라우저에서 새로고침해도 입력한 값이 안 날아감.
+    업로드 중(`uploading`) 상태로 저장돼있으면 복원 시 `idle`로 되돌림(응답 없는 스피너
+    방지). 이 폼 데이터는 서버에 저장하지 않는다 — 재현할 이유가 없는 값이라서.
+  - **결과 화면**: `POST /assessment`가 반환한 `id`로 `/result/:id`에 진입, 제출 직후엔
+    `location.state`로 넘어온 결과를 바로 쓰고(`src/routes/ResultRoute.jsx`), 새로고침
+    되거나 링크로 곧장 열리면 `GET /assessment/:id`로 백엔드에서 다시 불러온다 — 다른
+    브라우저/기기로 링크를 공유해도 동작(단, 서버 인메모리 저장소라 재시작하면 404).
+  - `/step2`를 필수 입력 없이 직접 열면 `/step1`로 리다이렉트하는 가드 있음.
+- 아직 없는 것: 배포 설정 (지금은 로컬 `localhost:5173`/`localhost:8000`만 동작) → 아래
+  "Docker 배포 스캐폴딩" 섹션에서 뼈대는 잡아둠, 실제 서버에 올리는 건 다음 단계.
+
+## Docker 배포 스캐폴딩 (2026-09-14) — ⚠️ 빌드 미검증
+
+로컬에서 완전히 검증된 구조를 컨테이너로 옮기기 위한 뼈대. **이 개발 머신에 Docker 자체가
+없어서 실제 `docker compose build`/`up`은 아직 한 번도 못 돌려봤다** — 문법과 구성은
+표준 패턴을 따랐지만, 처음 빌드할 때 (특히 `pdfplumber` 등 파이썬 패키지의 시스템 의존성)
+글루 이슈가 있을 수 있으니 Docker 있는 환경에서 한 번 실제로 빌드해서 검증 필요.
+
+- **`Dockerfile`** (백엔드) — `python:3.13-slim` 기반, `apt-get install tesseract-ocr
+  tesseract-ocr-kor poppler-utils`로 OCR 실행파일까지 이미지에 포함. 컨테이너 안에서는
+  이 실행파일들이 PATH에 바로 잡히므로 `TESSERACT_CMD` 같은 환경변수는 필요 없음
+  (Windows 로컬 개발 환경에서만 필요했던 것과 대비됨 — 위 "Tesseract/Poppler 실환경 검증"
+  섹션 참고).
+- **`frontend/Dockerfile`** — Node로 빌드 후 nginx로 정적 서빙하는 2단계 빌드.
+  `frontend/nginx.conf`가 `vite.config.js`의 dev 프록시(`/api` → `127.0.0.1:8000`)와
+  똑같은 역할을 함(`/api/` → `http://backend:8000/`, 컴포즈 서비스 이름으로 라우팅) +
+  `react-router-dom` 클라이언트 라우팅을 위한 `try_files ... /index.html` SPA 폴백.
+- **`docker-compose.yml`** — `backend`/`frontend` 두 서비스. **비밀키는 이미지에 절대
+  안 굽는다** — `.dockerignore`가 `.env`를 빌드 컨텍스트에서 제외하고, 컴포즈가 `${...}`
+  치환으로 `KAKAO_REST_API_KEY`/`MOLIT_SERVICE_KEY` 딱 두 개만 골라서 컨테이너
+  환경변수로 주입함. 이 방식 덕분에 `.env`에 있는 Windows 전용 `TESSERACT_CMD` 등의
+  로컬 경로가 컨테이너 안으로 새어 들어가지 않음(어차피 컨테이너 안엔 필요도 없음).
+- 실행 예정 (Docker 설치된 환경에서): `docker compose up --build` → 프론트
+  `http://localhost:5173`, 백엔드 `http://localhost:8000`.
+- 아직 안 한 것: 실제 빌드 검증, 프로덕션 시크릿 관리(지금은 `.env` 그대로 사용),
+  `GET /assessment/{id}`의 인메모리 저장소를 컨테이너 재시작에도 버티는 Redis/DB로
+  교체(멀티 워커 스케일 시에도 필요 — 위 `api.py` 인터페이스 계약 섹션의 경고 참고),
+  HTTPS/리버스프록시, 실제 클라우드/서버 배포 타깃 선정.
+
+## VWorld 공시가격 연동 스텁 (2026-09-14) — ⚠️ 응답 구조 미검증
+
+vworld.kr 자체가 접속 제한돼서 API 응답을 단 한 번도 못 본 채로 준비한 스텁. 다른 세
+어댑터(카카오/실거래가/건축HUB)는 전부 "로직 먼저 → 실키로 검증" 순서로 만들었는데,
+이번엔 그 "실키로 검증" 단계 자체를 아직 못 밟았다는 게 이전 세 개와의 결정적 차이 —
+그래서 아래 요청 URL/파라미터/파싱 로직은 전부 최선의 추정치이지 확정이 아니다.
+
+**만들어둔 것** (지금 당장은 안전하게 no-op으로 동작 — 아래 "지금 상태" 참고):
+- **`public_price_adapter.py`** — `fetch_public_price(pnu)` 함수. 다른 어댑터들과 동일한
+  `{"status": "ok"/"not_found"/"error", ...}` 계약을 따름. 파일 상단에 무엇이 추측이고
+  무엇을 확인해야 하는지 전부 주석으로 남겨둠.
+- **`debug_vworld_call.py`** — `debug_molit_call.py`와 같은 패턴. 키를 받으면 제일 먼저
+  이걸 돌려서 원본 응답을 눈으로 확인하는 용도.
+- **`property_aggregator.py`에 통합 완료** — `fetch_public_price`를 실거래가/건축물대장과
+  나란히 병렬 호출하도록 이미 연결해둠. `market_price_estimator.estimate_market_price()`의
+  `public_price` 인자로 그대로 흘러들어가서, 실거래가 없을 때 자동으로 폴백에 쓰임
+  (`confidence: "estimated_from_public_price"`). `sourceStatuses.publicPrice`도 추가해서
+  성공/실패가 항상 투명하게 노출되게 함.
+- **`test_public_price_adapter.py`** — 10개 테스트, 전부 "우리가 짠 파싱 로직이 가정한
+  구조대로 동작하는가"만 검증함. vworld가 실제로 이 구조로 응답하는지는 검증 못 함(못 하는
+  게 아니라 안 하는 게 맞음 — 실제 응답 보기 전엔 의미 없는 테스트라서).
+- **`.env.example`** 신규 생성 — 지금까지 쌓인 모든 환경변수 이름을 실제 값 없이 문서화
+  (`KAKAO_REST_API_KEY`, `MOLIT_SERVICE_KEY`, `VWORLD_*`, `TESSERACT_CMD` 등).
+
+**지금 상태(키 없음)에서 안전한 이유**: `fetch_public_price()`는 `VWORLD_API_KEY`가
+없거나 `DATA_LAYER_ID`가 플레이스홀더(`TODO_CONFIRM_LAYER_ID`)면 네트워크 호출 자체를
+안 하고 즉시 `{"status": "error", "reason": "invalid_request"}`를 반환한다 — 그래서 이
+스텁을 오늘 `property_aggregator.py`에 연결해도 지금까지의 동작(실거래가만으로 시세
+추정, 안 되면 `"unavailable"`)이 전혀 안 바뀐다. 158개 테스트 전부 그대로 통과 확인함.
+
+**키를 받으면 할 일 (순서대로)**:
+1. `.env`에 `VWORLD_API_KEY` 설정 (`.env.example` 참고). 키 발급 시 등록한 도메인이
+   `VWORLD_DOMAIN`(기본값 `localhost`)과 다르면 그 값으로 맞출 것.
+2. `python debug_vworld_call.py` 실행 — 1단계(키/도메인 유효성)만 먼저 확인.
+3. vworld 데이터 카탈로그에서 "공동주택가격" 레이어의 정확한 이름을 찾아
+   `.env`의 `VWORLD_HOUSING_PRICE_LAYER_ID`에 채운 뒤 `debug_vworld_call.py`를 다시
+   실행해 2단계(실제 조회) 응답을 확인.
+4. 실제 응답 구조를 보고 `public_price_adapter.py`의 `_parse_response()`를 다시 작성
+   (지금 가정한 `response.result.featureCollection.features[].properties.price` 구조가
+   틀렸을 가능성이 높음 — 다른 어댑터들도 실제로 이런 식으로 태그명이 달라서 버그가 났었음).
+   금액 단위가 만원인지 원인지도 이때 확인해서 필요하면 변환 추가.
+5. `test_public_price_adapter.py`의 `FAKE_*` 픽스처를 실제 응답 구조로 맞춰서 갱신.
+6. `api.py`의 `POST /assessment`를 실제로 호출해 엔드투엔드로 재검증
+   (다른 세 API를 검증했던 것과 같은 방식 — curl로 `marketPriceConfidence`가
+   `"estimated_from_public_price"`로 나오는 케이스를 직접 만들어 확인).
+
+## 다음 단계 후보 (우선순위는 상황에 따라 조정)
+
+- [x] `full_assessment.py` 오케스트레이터 작성
+- [x] FastAPI 레이어 씌우기 (`api.py`, `POST /assessment` + `GET /health`)
+- [x] `POST /registry/upload` 분리 엔드포인트 작성 (PDF 업로드 → OCR 미리보기 전용)
+- [x] 화면/UI 와이어프레임 (3단계 흐름, 위 섹션 참고)
+- [x] 프론트엔드 프레임워크 선정(React+Vite+Tailwind) + 실제 화면 구현 + 백엔드 실연동 확인
+- [x] `KAKAO_REST_API_KEY` + `MOLIT_SERVICE_KEY` 실제 발급/설정 + 전 구간 실제 API 검증
+- [x] 카카오(다음) 주소검색 팝업 연동
+- [x] `POST /registry/upload`를 실제 tesseract/poppler 환경(Windows, 포터블 설치)에서
+      진짜 PDF로 엔드투엔드 재검증 완료 — 위 "Tesseract/Poppler 실환경 검증" 섹션 참고.
+      Ubuntu 배포 서버에서는 `apt-get` 설치 후 재확인 권장(기본값으로 바로 동작 예상)
+- [x] 라우팅(`react-router-dom`) + 세션스토리지 지속성 + 결과 재조회용 `GET /assessment/{id}`
+- [x] Docker 배포 스캐폴딩 작성 (`Dockerfile`, `frontend/Dockerfile`, `docker-compose.yml`) —
+      **빌드 미검증**, 이 머신에 Docker 없어서 실제로 못 돌려봄. Docker 있는 환경에서
+      `docker compose up --build` 한 번 실행해서 검증 필요 (위 섹션 참고)
+- [x] VWorld 공시가격 연동 스텁 준비 (`public_price_adapter.py`, `debug_vworld_call.py`,
+      `property_aggregator.py` 통합, `.env.example`) — **응답 구조 미검증**, 키 받으면
+      할 일 순서가 위 "VWorld 공시가격 연동 스텁" 섹션에 정리돼 있음
+- [ ] vworld 키 받으면 위 섹션 순서대로 실제 검증 진행 (국내 지인에게 요청해둔 상태, 대기 중)
+- [ ] 실제 서버/클라우드에 배포 (배포 타깃 미정)
+
+---
+**최근 업데이트**: 2026-09-14, VSCode Claude Code 세션 — 카카오(다음) 주소검색 팝업 연동,
+`react-router-dom` 라우팅(`/step1` → `/step2` → `/result/:id`), Tesseract/Poppler
+실환경(Windows) 검증, Docker 배포 스캐폴딩(빌드 미검증)에 이어 VWorld 공시가격 연동
+스텁까지 준비함 — `public_price_adapter.py`를 `property_aggregator.py`에 실제로 연결
+해뒀지만 키/응답 구조가 없어 지금은 항상 안전하게 no-op(기존 동작 그대로). 실제 등기부등본
+PDF로 `POST /registry/upload` 전 구간 성공, `registry_summary_ocr.py`의 Windows 인코딩
+크래시 버그 발견/수정. 백엔드에 `GET /assessment/{id}`를 추가해 결과 화면이
+새로고침/링크공유에도 버티게 했고, 프론트 `sessionStorage`로 Step1/Step2 입력 폼도
+새로고침에 버티게 함(폼은 세션스토리지만, 결과는 백엔드 재조회까지 — 서로 다른 계층).
+vworld는 싱가포르 IP 접속 제한으로 국내 지인에게 API 조회를 요청해둔 상태라 계속 보류.
+백엔드 테스트 146→158개, 전부 통과 유지.
+전날(2026-09-13) 요약: `full_assessment.py` 오케스트레이터, `api.py`(FastAPI), 3단계 UI
+와이어프레임(Claude Design 캔버스), `frontend/`(React+Vite+Tailwind) 실제 구현에 이어
+`KAKAO_REST_API_KEY`/`MOLIT_SERVICE_KEY`까지 실제로 설정해 프론트→백엔드→카카오/국토부 API
+전 구간을 실제 데이터로 검증 완료 (테스트 118→128→141→146개, 와이어프레임 캔버스 1개).
+작업 중 marketPrice 단위 불일치(만원 vs 원) 버그와 `address_resolver.py`의
+KAKAO_REST_API_KEY 미설정 시 크래시 버그, 두 개를 실제로 발견/수정. fastapi/uvicorn/httpx/
+python-multipart/python-dotenv(백엔드), react/vite/tailwindcss(`frontend/`) 신규 의존성
+추가. `.gitignore` 신규 생성(.env, 실제 개인정보 PDF 등 제외 처리).

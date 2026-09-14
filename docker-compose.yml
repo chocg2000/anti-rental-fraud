@@ -1,0 +1,19 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # docker-compose가 이 파일과 같은 폴더의 .env를 읽어 ${...} 치환에 쓴다(컨테이너에
+      # .env 전체를 주입하는 게 아님 — 그래서 TESSERACT_CMD 같은 Windows 로컬 전용 경로가
+      # 컨테이너 안으로 새어 들어가지 않는다. 컨테이너 안은 apt-get 설치본이 PATH에 있어서
+      # 애초에 그 값들이 필요 없다).
+      - KAKAO_REST_API_KEY=${KAKAO_REST_API_KEY}
+      - MOLIT_SERVICE_KEY=${MOLIT_SERVICE_KEY}
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
