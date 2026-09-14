@@ -19,6 +19,12 @@ const FIXED_DATE_OPTIONS = [
   { id: 'no', label: '아직 안 받음' },
 ]
 
+// <input type="date">가 min/max 없이 손으로 빠르게 타이핑하면 연도 칸에 자릿수가
+// 밀려 들어가는(예: "202609") 브라우저 버그가 있다 — 범위를 지정하면 방지된다.
+// 완납증명서 발급일은 이미 발급된 문서이므로 미래일 수 없다.
+const today = new Date().toISOString().slice(0, 10)
+const MIN_TAX_ISSUE_DATE = `${new Date().getFullYear() - 5}-01-01`
+
 export default function Step2Documents({ documents, onChange, onSubmit, submitting, submitError, onDismissSubmitError }) {
   const fileInputRef = useRef(null)
   const toastMessage = documents.uploadError || submitError
@@ -261,6 +267,8 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
                     const value = e.target.value
                     onChange((prev) => ({ ...prev, taxIssueDate: value }))
                   }}
+                  min={MIN_TAX_ISSUE_DATE}
+                  max={today}
                   className="h-11 rounded-lg border border-gray-300 px-2.5 text-[13px] text-gray-900 focus:border-gray-900 focus:outline-none"
                 />
               </div>

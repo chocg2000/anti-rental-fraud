@@ -2,6 +2,13 @@ import { useState } from 'react'
 import ScreenShell from '../components/ScreenShell'
 import AddressSearchModal from '../components/AddressSearchModal'
 
+// <input type="date">가 min/max 없이 손으로 빠르게 타이핑하면 연도 칸에 자릿수가
+// 밀려 들어가는(예: "202609") 브라우저 버그가 있다 — 범위를 지정하면 해당 칸의
+// 자릿수 한계가 강제돼 방지된다.
+const today = new Date()
+const MIN_DATE = `${today.getFullYear() - 1}-01-01`
+const MAX_DATE = `${today.getFullYear() + 5}-12-31`
+
 const PROPERTY_TYPES = [
   { id: 'apartment', label: '아파트' },
   { id: 'villa', label: '빌라' },
@@ -125,6 +132,8 @@ export default function Step1Address({ form, onChange, onNext }) {
             type="date"
             value={form.moveInDate}
             onChange={set('moveInDate')}
+            min={MIN_DATE}
+            max={MAX_DATE}
             className="h-12 rounded-lg border border-gray-300 px-3 text-sm text-gray-900 focus:border-gray-900 focus:outline-none"
           />
           <div className="text-[11px] text-gray-400">
