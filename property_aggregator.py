@@ -68,7 +68,7 @@ def _fetch_recent_trades(lawd_cd_5: str, as_of: date, months: int = 6) -> dict:
 
 
 def get_property_info(address_query: str, target_area: float, as_of: date | None = None,
-                       months: int = 6) -> dict:
+                       months: int = 6, property_type: str = "apartment") -> dict:
     """
     주소와 대상 전용면적으로 PropertyInfo에 가까운 결과를 조립해 반환한다.
 
@@ -83,11 +83,25 @@ def get_property_info(address_query: str, target_area: float, as_of: date | None
         "violationStatusConfirmed": bool,
         "violationStatusRaw": str | None,
         "sourceStatuses": {                  # 디버깅/UX용 — 어떤 소스가 성공/실패했는지 투명하게 노출
-            "transactionPrice": "ok" | "error" | ...,
+            "transactionPrice": "ok" | "error" | "skipped" | ...,
             "buildingRegister": "ok" | "not_found" | "error" | ...,
             "publicPrice": "ok" | "not_found" | "error" | ...,  # vworld 키 없으면 항상 error
         }
     }
+
+    Args:
+        property_type: "apartment" | "villa" | "officetel" | "multi_household".
+            ⚠️ 국토부 실거래가 API(real_transaction_price_adapter.py)는 "아파트매매"만
+            제공한다 — 연립다세대/오피스텔용 엔드포인트는 아직 연동돼 있지 않다.
+            그래서 property_type이 "apartment"가 아니면 이 실거래 비교를 아예 건너뛴다
+            (같은 동의 아파트 가격을 빌라/다세대 시세인 것처럼 잘못 보여주지 않기 위함 —
+            실제로 54㎡ 다세대가 근처 아파트 실거래 기준 14.375억으로 잘못 나오고 실제
+            시세는 9~10억이었던 버그를 겪고 나서 추가함). 이 경우 공시가격 폴백으로
+            넘어가거나(값이 있으면 confidence="estimated_from_public_price"), 그마저
+            없으면 marketPrice=None/confidence="unavailable"이 된다. 기본값을
+            "apartment"로 둔 건 이 함수를 직접 호출하는 기존 코드(테스트 포함)의 동작을
+            바꾸지 않기 위함 — 실제 서비스 흐름(full_assessment.py)은 유저가 고른
+            property_type을 항상 명시적으로 전달한다.
 
     raises PropertyAggregationError: 주소 자체를 정규화하지 못한 경우 (이 경우는 부분 실패 허용 대상이 아님 —
         주소가 틀리면 뒤의 모든 조회가 무의미하므로 여기서만 예외를 던진다.)
@@ -116,8 +130,12 @@ def get_property_info(address_query: str, target_area: float, as_of: date | None
     # 공시가격(public_price_adapter)은 아직 vworld 키가 없는 상태에서도 안전하게 붙여둔다 —
     # 키가 없으면 fetch_public_price()가 네트워크 호출 없이 바로 invalid_request를 반환하므로
     # (public_price_adapter.py 참고) 지금 당장의 동작은 이 통합 이전과 완전히 동일하다.
+    # 국토부 실거래가 API는 아파트매매만 지원한다 — 아파트가 아니면 애초에 조회를
+    # 시도하지 않는다(위 property_type 인자 설명 참고).
+    query_apt_trades = property_type == "apartment"
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        trade_future = executor.submit(_fetch_recent_trades, lawd_cd_5, as_of, months)
+        trade_future = executor.submit(_fetch_recent_trades, lawd_cd_5, as_of, months) if query_apt_trades else None
         if can_query_building:
             building_future = executor.submit(
                 fetch_building_register, lawd_cd_5, bjdong_cd, plat_gb_cd, bun, ji
@@ -126,7 +144,10 @@ def get_property_info(address_query: str, target_area: float, as_of: date | None
             building_future = None
         public_price_future = executor.submit(fetch_public_price, pnu) if pnu else None
 
-        trade_result = trade_future.result()
+        trade_result = trade_future.result() if trade_future else {
+            "status": "skipped",
+            "reason": f"국토부 실거래가 API는 아파트매매만 지원 — property_type='{property_type}'은 조회 대상 아님",
+        }
         building_result = building_future.result() if building_future else {
             "status": "error", "reason": "invalid_request"  # PNU 없어서 애초에 조회 불가
         }
@@ -143,6 +164,12 @@ def get_property_info(address_query: str, target_area: float, as_of: date | None
     if trade_result["status"] == "ok":
         estimate = estimate_market_price(
             trade_result["data"], target_area=target_area, as_of=as_of, public_price=public_price,
+        )
+    elif trade_result["status"] == "skipped":
+        # 아파트 실거래 비교 자체를 시도하지 않은 경우 — trades=[]로 넘기면
+        # estimate_market_price()가 곧바로 공시가격 폴백(또는 unavailable)으로 넘어간다.
+        estimate = estimate_market_price(
+            [], target_area=target_area, as_of=as_of, public_price=public_price,
         )
     else:
         # TODO(vworld 연동 후): 이 분기(실거래가 API 호출 자체가 실패한 경우)는 아직

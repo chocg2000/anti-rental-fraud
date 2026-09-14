@@ -83,6 +83,29 @@ class TestMissingRegistryData(unittest.TestCase):
         self.assertEqual(identity_check["riskLevel"], "unknown")
 
 
+class TestPropertyTypeForwardedToPropertyInfo(unittest.TestCase):
+    """
+    실제로 겪은 버그: property_type이 get_property_info까지 전달되지 않아서, 빌라를
+    진단해도 국토부 아파트 실거래(더 비쌈)로 시세가 잡혔었다 — property_aggregator.py
+    참고. 오케스트레이터가 이 값을 그대로 넘기는지만 여기서 확인한다(실제 분기 로직
+    자체는 test_property_aggregator.py가 검증).
+    """
+
+    @patch("full_assessment.get_property_info")
+    def test_property_type_is_forwarded(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        run_full_assessment(
+            address="서울 강남구 테헤란로 427",
+            target_area=54.0,
+            my_deposit=100_000_000,
+            contract_landlord_name="홍길동",
+            property_type="villa",
+        )
+
+        self.assertEqual(mock_get_info.call_args.kwargs["property_type"], "villa")
+
+
 class TestMarketPriceUnitConversion(unittest.TestCase):
 
     @patch("full_assessment.get_property_info")

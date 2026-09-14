@@ -63,7 +63,11 @@ def run_full_assessment(
         target_area: 대상 전용면적 (㎡)
         my_deposit: 내가 들어갈 보증금 (원 단위)
         contract_landlord_name: 임대차 계약서상 임대인 이름
-        property_type: "apartment" | "villa" | "officetel" | "multi_household"
+        property_type: "apartment" | "villa" | "officetel" | "multi_household".
+            LTV 안전비율뿐 아니라 시세 산출 방식도 이 값에 좌우된다 — "apartment"가
+            아니면 property_aggregator가 국토부 아파트 실거래 비교를 건너뛴다(연립다세대/
+            오피스텔 실거래 API는 아직 미연동이라, 안 그러면 같은 동네 아파트 가격을
+            빌라/다세대 시세인 것처럼 잘못 보여주게 된다 — property_aggregator.py 참고).
         as_of: 판단 기준일 (기본값: 오늘)
         registry_summary_text: 등기부등본 '주요 등기사항 요약' 페이지 OCR 원문 (선택 —
             없으면 깡통전세 위험은 unknown, 임대인 일치 확인도 unknown으로 나간다)
@@ -98,7 +102,7 @@ def run_full_assessment(
         as_of = date.today()
 
     try:
-        property_info = get_property_info(address, target_area, as_of=as_of)
+        property_info = get_property_info(address, target_area, as_of=as_of, property_type=property_type)
     except PropertyAggregationError as e:
         return {
             "overallGrade": "error",

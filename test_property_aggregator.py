@@ -102,6 +102,71 @@ class TestGetPropertyInfo(unittest.TestCase):
         self.assertTrue(result["violationStatusConfirmed"])
         self.assertEqual(result["violationStatusRaw"], "위반")
 
+    @patch("property_aggregator.fetch_public_price")
+    @patch("property_aggregator.fetch_building_register")
+    @patch("property_aggregator.fetch_apt_trades")
+    @patch("property_aggregator.resolve_address")
+    def test_villa_property_type_skips_apartment_trade_fetch(
+        self, mock_resolve, mock_trades, mock_building, mock_public_price
+    ):
+        # 실제로 겪은 버그: 국토부 실거래가 API는 아파트매매만 지원하는데, 빌라/다세대에도
+        # 그대로 적용돼서 근처 아파트 가격(더 비쌈)이 빌라 시세인 것처럼 나왔었다.
+        # property_type="villa"면 애초에 아파트 실거래 조회 자체를 하면 안 된다.
+        mock_resolve.return_value = FAKE_NORMALIZED
+        mock_building.return_value = {"status": "not_found"}
+        mock_public_price.return_value = {"status": "error", "reason": "invalid_request"}
+
+        result = get_property_info(
+            "서울 강남구 테헤란로 427", target_area=54.0, as_of=date(2024, 4, 1), property_type="villa",
+        )
+
+        mock_trades.assert_not_called()
+        self.assertEqual(result["sourceStatuses"]["transactionPrice"], "skipped")
+        self.assertIsNone(result["marketPrice"])
+        self.assertEqual(result["marketPriceConfidence"], "unavailable")
+
+    @patch("property_aggregator.fetch_public_price")
+    @patch("property_aggregator.fetch_building_register")
+    @patch("property_aggregator.fetch_apt_trades")
+    @patch("property_aggregator.resolve_address")
+    def test_villa_property_type_still_falls_back_to_public_price(
+        self, mock_resolve, mock_trades, mock_building, mock_public_price
+    ):
+        mock_resolve.return_value = FAKE_NORMALIZED
+        mock_building.return_value = {"status": "not_found"}
+        mock_public_price.return_value = {"status": "ok", "data": {"publicPrice": 50_000}}
+
+        result = get_property_info(
+            "서울 강남구 테헤란로 427", target_area=54.0, as_of=date(2024, 4, 1), property_type="villa",
+        )
+
+        mock_trades.assert_not_called()
+        self.assertEqual(result["marketPriceConfidence"], "estimated_from_public_price")
+        self.assertEqual(result["marketPrice"], round(50_000 * 1.4))
+
+    @patch("property_aggregator.fetch_building_register")
+    @patch("property_aggregator.fetch_apt_trades")
+    @patch("property_aggregator.resolve_address")
+    def test_apartment_property_type_still_uses_trade_data(
+        self, mock_resolve, mock_trades, mock_building
+    ):
+        # 기본값(생략 시 "apartment")과 명시적으로 "apartment"를 넘긴 경우 모두
+        # 기존 동작(아파트 실거래 비교)이 그대로 유지돼야 한다.
+        mock_resolve.return_value = FAKE_NORMALIZED
+        mock_trades.side_effect = lambda lawd, ym: (
+            {"status": "ok", "data": [make_trade(85000, 84.99, 2024, 3)] * 3}
+            if ym == "202403" else {"status": "not_found"}
+        )
+        mock_building.return_value = {"status": "not_found"}
+
+        result = get_property_info(
+            "서울 강남구 테헤란로 427", target_area=84.99, as_of=date(2024, 4, 1), property_type="apartment",
+        )
+
+        mock_trades.assert_called()
+        self.assertEqual(result["sourceStatuses"]["transactionPrice"], "ok")
+        self.assertEqual(result["marketPrice"], 85000)
+
     @patch("property_aggregator.resolve_address")
     def test_address_resolution_failure_raises(self, mock_resolve):
         mock_resolve.side_effect = AddressResolutionError("주소를 찾을 수 없습니다")
