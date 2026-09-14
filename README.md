@@ -84,7 +84,7 @@ python run_all_tests.py   # 전체 test_*.py 자동 탐색 후 실행
 | `market_price_estimator.py` | 시세 추정 (동→구 확대, 공시가격 폴백 포함) | ✅ 실제 데이터로 검증 |
 | `building_register_adapter.py` | 건축물대장(건축HUB) 조회, 근생빌라 탐지 | ✅ 실제 데이터로 검증, 버그 3개 수정 이력 있음 |
 | `property_aggregator.py` | 실거래가/건축물대장/공시가격 병렬 호출 + 부분실패 허용 | ✅ |
-| `public_price_adapter.py` | 브이월드 공동주택 공시가격 조회 | ⚠️ 스텁 — 응답 구조 미검증(아래 참고) |
+| `public_price_adapter.py` | 브이월드 공동주택 공시가격 조회 | ⚠️ 키/도메인/에러구조 검증됨, 성공 응답 구조 미검증(아래 참고) |
 | `registry_parser.py` | 등기부 본문(갑구/을구) 파싱 로직 | ✅ 로직 완성 (실제 데이터 확보 경로는 미해결) |
 | `registry_summary_parser.py` / `registry_summary_ocr.py` | 등기부 요약 페이지 OCR+파싱 | ✅ 실제 PDF로 엔드투엔드 검증 (Windows 포함) |
 | `fraud_pattern_rules.py` | 신축빌라+소유주변경 탐지 | ✅ 로직 완성 (이력 데이터 확보 경로는 미해결) |
@@ -179,11 +179,13 @@ subprocess로 CLI 직접 호출), Windows는 이 실행파일들이 PATH에 자�
 
 ## 미해결 이슈 (다음 세션에서 이어갈 것들)
 
-1. **공시가격 API 미연결** — WMS/WFS(브이월드) 기반이라 방식이 다름. vworld.kr 자체가
-   싱가포르 IP에서 접속 제한돼서 국내 지인에게 키 발급/데이터 조회를 요청해둔 상태
-   (2026-09-14 기준 대기 중). **키를 못 받은 채로 스텁 코드는 미리 준비해둠** — 아래
-   "VWorld 공시가격 연동 스텁" 섹션 참고. 키가 오면 `.env`에 붙여넣고
-   `debug_vworld_call.py`부터 돌리면 바로 이어서 진행 가능.
+1. **공시가격 API 미연결** — WMS/WFS(브이월드) 기반이라 방식이 다름. vworld.kr API 서버
+   자체가 이 개발 머신(싱가포르 IP)에서 계속 불안정함(연결 끊김 또는 502, 2026-09-14/15
+   양일 재확인해도 동일) — 키/도메인 자체는 **2026-09-15에 유효함이 확인됨**(지인이
+   브라우저로 대신 호출, 아래 "VWorld 공시가격 연동 스텁" 섹션 참고). 남은 건 "공동주택
+   가격" 데이터셋의 정확한 `data=` 레이어 ID를 찾는 것과, 그걸로 받은 성공 응답 구조에
+   맞춰 `_parse_response()`를 마저 완성하는 것 — 이 머신에서 vworld API를 직접 못 두드리니
+   계속 지인의 브라우저를 거쳐 확인해야 할 가능성이 높음.
 2. **등기부 본문(갑구) 소유권 이전 이력 확보 경로 미해결** — `registry_parser.py`와
    `fraud_pattern_rules.py`(신축빌라+소유주변경 룰) 로직은 완성됐지만, 본문 OCR 정확도가
    낮아서 실제 이력 데이터를 안정적으로 못 가져오는 상태. 상용 OCR API(네이버 CLOVA,
@@ -350,14 +352,31 @@ DB 같은 공유 저장소로 바꿔야 한다. 없는 `id`로 조회하면 404.
   교체(멀티 워커 스케일 시에도 필요 — 위 `api.py` 인터페이스 계약 섹션의 경고 참고),
   HTTPS/리버스프록시, 실제 클라우드/서버 배포 타깃 선정.
 
-## VWorld 공시가격 연동 스텁 (2026-09-14) — ⚠️ 응답 구조 미검증
+## VWorld 공시가격 연동 스텁 (2026-09-14 준비, 2026-09-15 부분 검증)
 
-vworld.kr 자체가 접속 제한돼서 API 응답을 단 한 번도 못 본 채로 준비한 스텁. 다른 세
-어댑터(카카오/실거래가/건축HUB)는 전부 "로직 먼저 → 실키로 검증" 순서로 만들었는데,
-이번엔 그 "실키로 검증" 단계 자체를 아직 못 밟았다는 게 이전 세 개와의 결정적 차이 —
-그래서 아래 요청 URL/파라미터/파싱 로직은 전부 최선의 추정치이지 확정이 아니다.
+vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 불안정(연결 끊김/502)해서,
+**지인이 브라우저로 대신 호출해서 원본 응답을 확인해줘야 진행이 가능한 상태**다.
+다른 세 어댑터(카카오/실거래가/건축HUB)의 "로직 먼저 → 실키로 검증"과 달리, 검증
+자체를 이 머신에서 직접 못 하고 있다는 게 결정적 차이.
 
-**만들어둔 것** (지금 당장은 안전하게 no-op으로 동작 — 아래 "지금 상태" 참고):
+**2026-09-15 확인된 것** (지인이 `vworld_test_link.txt`의 링크를 브라우저에 붙여넣어
+받아온 실제 응답):
+- `VWORLD_API_KEY`가 유효하다 (인증 통과)
+- `domain=localhost`가 등록값과 일치한다 (도메인 불일치 에러 없음)
+- 에러 응답의 봉투 구조가 확정됨: `{"response": {"service": {...}, "status": "ERROR",
+  "error": {"level", "code", "text"}}}` — `public_price_adapter.py`의
+  `_parse_response()`에 반영 완료, `test_public_price_adapter.py`에 실제 응답을 그대로
+  골든 픽스처(`REAL_PARAM_REQUIRED_ERROR`)로 박아둠.
+- **아직 모르는 것**: "공동주택가격" 데이터셋의 정확한 `data=` 값(레이어 ID) — 이게 없어서
+  성공("OK") 응답은 한 번도 못 받아봤다. 그래서 성공 시 필드 구조
+  (`result.featureCollection.features[].properties.가격필드`)는 여전히 추측이다.
+- 이 머신에서 직접 재확인 시도(9/14, 9/15 두 번)했지만 둘 다 502로 실패 — vworld API
+  접속 불안정은 여전히 지속 중. 앞으로도 성공 응답 확인은 지인의 브라우저를 거쳐야 할
+  가능성이 높다 (`vworld_test_link.txt` 같은 "링크 만들어서 브라우저에 붙여넣기" 방식이
+  의외로 잘 통함 — 자동화 요청은 막히는데 브라우저 요청은 통과하는 걸 보면 vworld 쪽
+  보안필터가 브라우저 유사 트래픽과 스크립트 트래픽을 다르게 취급하는 것으로 추정).
+
+**만들어둔 것** (키 없이도, 레이어 ID 없이도 안전하게 no-op으로 동작):
 - **`public_price_adapter.py`** — `fetch_public_price(pnu)` 함수. 다른 어댑터들과 동일한
   `{"status": "ok"/"not_found"/"error", ...}` 계약을 따름. 파일 상단에 무엇이 추측이고
   무엇을 확인해야 하는지 전부 주석으로 남겨둠.
@@ -368,33 +387,38 @@ vworld.kr 자체가 접속 제한돼서 API 응답을 단 한 번도 못 본 채
   `public_price` 인자로 그대로 흘러들어가서, 실거래가 없을 때 자동으로 폴백에 쓰임
   (`confidence: "estimated_from_public_price"`). `sourceStatuses.publicPrice`도 추가해서
   성공/실패가 항상 투명하게 노출되게 함.
-- **`test_public_price_adapter.py`** — 10개 테스트, 전부 "우리가 짠 파싱 로직이 가정한
-  구조대로 동작하는가"만 검증함. vworld가 실제로 이 구조로 응답하는지는 검증 못 함(못 하는
-  게 아니라 안 하는 게 맞음 — 실제 응답 보기 전엔 의미 없는 테스트라서).
-- **`.env.example`** 신규 생성 — 지금까지 쌓인 모든 환경변수 이름을 실제 값 없이 문서화
+- **`test_public_price_adapter.py`** — 12개 테스트. 에러 응답 관련 테스트(`REAL_
+  PARAM_REQUIRED_ERROR` 픽스처 쓰는 것들)는 실제 응답 기반 골든 테스트. 성공 응답 관련
+  테스트(`FAKE_OK_RESPONSE`/`FAKE_EMPTY_RESPONSE` 쓰는 것들)는 여전히 "우리가 짠 파싱
+  로직이 가정한 구조대로 동작하는가"만 검증하는 추측 기반 테스트.
+- **`.env.example`** — 지금까지 쌓인 모든 환경변수 이름을 실제 값 없이 문서화
   (`KAKAO_REST_API_KEY`, `MOLIT_SERVICE_KEY`, `VWORLD_*`, `TESSERACT_CMD` 등).
+- **`vworld_test_link.txt`** (git 추적 제외, 로컬 전용) — 실제 키가 포함된 vworld
+  테스트 URL을 생성해두는 용도. 이 머신이 vworld API에 직접 접속이 안 될 때, 이 파일의
+  링크를 지인 등 한국 IP를 쓰는 사람에게 보내서 "브라우저에 붙여넣고 결과 캡처해서
+  보내달라"고 부탁하는 흐름으로 썼다 — 의외로 잘 통했으니 다음 라운드(레이어 ID 확인 등)
+  에도 같은 패턴 재사용 가능.
 
-**지금 상태(키 없음)에서 안전한 이유**: `fetch_public_price()`는 `VWORLD_API_KEY`가
-없거나 `DATA_LAYER_ID`가 플레이스홀더(`TODO_CONFIRM_LAYER_ID`)면 네트워크 호출 자체를
-안 하고 즉시 `{"status": "error", "reason": "invalid_request"}`를 반환한다 — 그래서 이
-스텁을 오늘 `property_aggregator.py`에 연결해도 지금까지의 동작(실거래가만으로 시세
-추정, 안 되면 `"unavailable"`)이 전혀 안 바뀐다. 158개 테스트 전부 그대로 통과 확인함.
+**지금 상태(레이어 ID 없음)에서 안전한 이유**: `fetch_public_price()`는
+`DATA_LAYER_ID`가 플레이스홀더(`TODO_CONFIRM_LAYER_ID`)면 네트워크 호출 자체를 안 하고
+즉시 `{"status": "error", "reason": "invalid_request"}`를 반환한다 — 그래서 이 스텁을
+`property_aggregator.py`에 연결해도 지금까지의 동작(실거래가만으로 시세 추정, 안 되면
+`"unavailable"`)이 전혀 안 바뀐다. 160개 테스트 전부 그대로 통과 확인함.
 
-**키를 받으면 할 일 (순서대로)**:
-1. `.env`에 `VWORLD_API_KEY` 설정 (`.env.example` 참고). 키 발급 시 등록한 도메인이
-   `VWORLD_DOMAIN`(기본값 `localhost`)과 다르면 그 값으로 맞출 것.
-2. `python debug_vworld_call.py` 실행 — 1단계(키/도메인 유효성)만 먼저 확인.
-3. vworld 데이터 카탈로그에서 "공동주택가격" 레이어의 정확한 이름을 찾아
-   `.env`의 `VWORLD_HOUSING_PRICE_LAYER_ID`에 채운 뒤 `debug_vworld_call.py`를 다시
-   실행해 2단계(실제 조회) 응답을 확인.
-4. 실제 응답 구조를 보고 `public_price_adapter.py`의 `_parse_response()`를 다시 작성
-   (지금 가정한 `response.result.featureCollection.features[].properties.price` 구조가
-   틀렸을 가능성이 높음 — 다른 어댑터들도 실제로 이런 식으로 태그명이 달라서 버그가 났었음).
-   금액 단위가 만원인지 원인지도 이때 확인해서 필요하면 변환 추가.
-5. `test_public_price_adapter.py`의 `FAKE_*` 픽스처를 실제 응답 구조로 맞춰서 갱신.
-6. `api.py`의 `POST /assessment`를 실제로 호출해 엔드투엔드로 재검증
-   (다른 세 API를 검증했던 것과 같은 방식 — curl로 `marketPriceConfidence`가
-   `"estimated_from_public_price"`로 나오는 케이스를 직접 만들어 확인).
+**남은 할 일 (순서대로)**:
+1. "공동주택가격" 데이터셋의 정확한 `data=` 레이어 ID 찾기 — vworld 데이터
+   카탈로그/Open API 가이드에서 "공동주택가격" 검색 (이 머신에서 직접 못 찾으면 지인에게
+   부탁하거나, 후보 URL을 만들어서 `vworld_test_link.txt` 방식으로 브라우저 테스트).
+2. 찾은 값을 `.env`의 `VWORLD_HOUSING_PRICE_LAYER_ID`에 채우고, `data=` 파라미터를
+   포함한 실제 조회 요청의 성공 응답을 확인 (마찬가지로 브라우저 링크 방식 활용 가능).
+3. 실제 성공 응답 구조를 보고 `public_price_adapter.py`의 `_parse_response()`에서
+   `if status != "OK":` 아래쪽(현재 미검증 표시된 부분)을 다시 작성. 에러 분기는 이미
+   검증 완료라 안 건드려도 됨. 금액 단위가 만원인지 원인지도 이때 확인해서 필요하면 변환.
+4. `test_public_price_adapter.py`의 `FAKE_OK_RESPONSE`/`FAKE_EMPTY_RESPONSE`를 실제
+   응답 구조로 교체 (`REAL_PARAM_REQUIRED_ERROR`처럼 진짜 응답을 그대로 골든 픽스처로).
+5. `api.py`의 `POST /assessment`를 실제로 호출해 엔드투엔드로 재검증 — 다만 이 머신
+   에서는 vworld 직접 호출이 계속 막힐 가능성이 있으므로, 안 되면 지인에게 curl 대신
+   `vworld_test_link.txt` 같은 링크로 대체 검증하거나, 배포 서버(국내 리전)에서 재확인.
 
 ## 다음 단계 후보 (우선순위는 상황에 따라 조정)
 
@@ -413,23 +437,31 @@ vworld.kr 자체가 접속 제한돼서 API 응답을 단 한 번도 못 본 채
       **빌드 미검증**, 이 머신에 Docker 없어서 실제로 못 돌려봄. Docker 있는 환경에서
       `docker compose up --build` 한 번 실행해서 검증 필요 (위 섹션 참고)
 - [x] VWorld 공시가격 연동 스텁 준비 (`public_price_adapter.py`, `debug_vworld_call.py`,
-      `property_aggregator.py` 통합, `.env.example`) — **응답 구조 미검증**, 키 받으면
-      할 일 순서가 위 "VWorld 공시가격 연동 스텁" 섹션에 정리돼 있음
-- [ ] vworld 키 받으면 위 섹션 순서대로 실제 검증 진행 (국내 지인에게 요청해둔 상태, 대기 중)
+      `property_aggregator.py` 통합, `.env.example`)
+- [x] VWorld 키 발급 + 유효성/도메인/에러구조 검증 완료 (2026-09-15, 지인 브라우저 경유) —
+      위 "VWorld 공시가격 연동 스텁" 섹션에 남은 5단계(레이어 ID 찾기부터) 정리돼 있음
+- [ ] "공동주택가격" 레이어 ID 확인 → 성공 응답 구조로 `_parse_response()` 완성 → 엔드투엔드
+      재검증 (이 머신은 vworld API 직접 접속이 계속 불안정 — 지인 브라우저 경유 필요 가능성)
 - [ ] 실제 서버/클라우드에 배포 (배포 타깃 미정)
 
 ---
-**최근 업데이트**: 2026-09-14, VSCode Claude Code 세션 — 카카오(다음) 주소검색 팝업 연동,
-`react-router-dom` 라우팅(`/step1` → `/step2` → `/result/:id`), Tesseract/Poppler
-실환경(Windows) 검증, Docker 배포 스캐폴딩(빌드 미검증)에 이어 VWorld 공시가격 연동
-스텁까지 준비함 — `public_price_adapter.py`를 `property_aggregator.py`에 실제로 연결
-해뒀지만 키/응답 구조가 없어 지금은 항상 안전하게 no-op(기존 동작 그대로). 실제 등기부등본
-PDF로 `POST /registry/upload` 전 구간 성공, `registry_summary_ocr.py`의 Windows 인코딩
+**최근 업데이트**: 2026-09-15, VSCode Claude Code 세션 — VWorld 키를 `.env`에 설정하고
+검증 시도. 이 머신은 vworld API 접속이 계속 불안정(연결 끊김/502, 이틀 연속 재현)해서
+지인이 브라우저로 대신 호출해 받아온 응답으로 확인 — **키/도메인 유효함, 에러 응답
+봉투 구조 확정**(`public_price_adapter.py`의 `_parse_response()`와
+`test_public_price_adapter.py`의 골든 픽스처에 반영 완료). 성공 응답 구조는 아직
+미확인(공동주택가격 레이어 ID를 못 찾음) — 다음 세션에서 이어갈 것.
+`vworld_test_link.txt`(git 미추적)로 "링크 생성 → 브라우저로 대신 열기" 검증 패턴을
+확립함, 다음 라운드에도 재사용 예정. 백엔드 테스트 158→160개, 전부 통과 유지.
+
+2026-09-14 요약: 카카오(다음) 주소검색 팝업 연동, `react-router-dom` 라우팅(`/step1` →
+`/step2` → `/result/:id`), Tesseract/Poppler 실환경(Windows) 검증, Docker 배포
+스캐폴딩(빌드 미검증), VWorld 공시가격 연동 스텁 준비. 실제 등기부등본 PDF로
+`POST /registry/upload` 전 구간 성공, `registry_summary_ocr.py`의 Windows 인코딩
 크래시 버그 발견/수정. 백엔드에 `GET /assessment/{id}`를 추가해 결과 화면이
 새로고침/링크공유에도 버티게 했고, 프론트 `sessionStorage`로 Step1/Step2 입력 폼도
 새로고침에 버티게 함(폼은 세션스토리지만, 결과는 백엔드 재조회까지 — 서로 다른 계층).
-vworld는 싱가포르 IP 접속 제한으로 국내 지인에게 API 조회를 요청해둔 상태라 계속 보류.
-백엔드 테스트 146→158개, 전부 통과 유지.
+백엔드 테스트 146→158개. `CLAUDE.md` 신규 생성, git 저장소 초기화 + 첫 커밋 완료.
 전날(2026-09-13) 요약: `full_assessment.py` 오케스트레이터, `api.py`(FastAPI), 3단계 UI
 와이어프레임(Claude Design 캔버스), `frontend/`(React+Vite+Tailwind) 실제 구현에 이어
 `KAKAO_REST_API_KEY`/`MOLIT_SERVICE_KEY`까지 실제로 설정해 프론트→백엔드→카카오/국토부 API
