@@ -17,7 +17,7 @@ export default function ScreenShell({ step, title, subtitle, toast, children, fo
 
       <div className="flex-1 overflow-y-auto px-5 py-5">{children}</div>
 
-      {footer && <footer className="shrink-0 border-t border-gray-200 px-5 py-4">{footer}</footer>}
+      {footer && <footer className="shrink-0 border-t border-gray-200 px-5 pt-4 pb-6">{footer}</footer>}
     </div>
   )
 }

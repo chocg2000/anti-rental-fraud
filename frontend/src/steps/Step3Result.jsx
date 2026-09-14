@@ -14,20 +14,28 @@ const CONFIDENCE_META = {
 function Card({ title, badgeLabel, badgeClass, summary, detail, expanded, onToggle, extra }) {
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200">
-      <button type="button" onClick={onToggle} className="flex w-full items-start justify-between gap-2.5 bg-white p-3.5 text-left">
+      <button type="button" onClick={onToggle} className="flex w-full items-center justify-between gap-2.5 bg-white p-3.5 text-left">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[13px] font-bold text-gray-900">{title}</span>
             {badgeLabel && <span className={`rounded-full border px-2 py-0.5 text-[10.5px] ${badgeClass}`}>{badgeLabel}</span>}
           </div>
-          <div className="text-xs text-gray-500">{summary}</div>
+          <div className="text-[12.5px] font-semibold text-gray-700">{summary}</div>
           {extra}
         </div>
-        <IconChevronDown size={16} className={`mt-0.5 shrink-0 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        <IconChevronDown size={16} className={`shrink-0 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
       </button>
       {expanded && <div className="border-t border-gray-100 px-3.5 pt-2.5 pb-3.5 text-[12.5px] leading-relaxed text-gray-700">{detail}</div>}
     </div>
   )
+}
+
+// "라벨 — 설명" 패턴으로 된 reason 문자열을 두 줄로 나눠서 렌더링하기 위한 분리.
+// (백엔드 도메인 룰들이 전부 이 포맷으로 reason을 만들어서 씀 — tenancy_safety_rules.py 등)
+function splitReason(text) {
+  const idx = text.indexOf(' — ')
+  if (idx === -1) return { label: null, detail: text }
+  return { label: text.slice(0, idx), detail: text.slice(idx + 3) }
 }
 
 export default function Step3Result({ result, onRestart }) {
@@ -68,14 +76,20 @@ export default function Step3Result({ result, onRestart }) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           <div className="text-[13px] font-bold text-gray-900">판단 근거</div>
-          {result.reasons.map((r, i) => (
-            <div key={i} className="flex gap-2 text-[12.5px] leading-relaxed text-gray-700">
-              <span className="shrink-0 text-gray-400">•</span>
-              <span>{r}</span>
-            </div>
-          ))}
+          {result.reasons.map((r, i) => {
+            const { label, detail } = splitReason(r)
+            return (
+              <div key={i} className="flex gap-2 text-[12.5px] text-gray-700">
+                <span className="shrink-0 text-gray-400">•</span>
+                <span className="min-w-0 flex-1">
+                  {label && <span className="block font-semibold text-gray-900">{label}</span>}
+                  <span className="block leading-[1.7]">{detail}</span>
+                </span>
+              </div>
+            )
+          })}
         </div>
 
         {isError && (
