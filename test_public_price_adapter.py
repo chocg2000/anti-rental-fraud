@@ -1,12 +1,14 @@
 """
 public_price_adapter 단위 테스트
 ----------------------------------
-2026-09-15: 에러 응답 구조는 실제 vworld 응답(REAL_PARAM_REQUIRED_ERROR, 지인이 브라우저로
-대신 호출해서 받아온 원본)으로 확인됨 — 이 부분 테스트는 진짜 검증이다.
+2026-09-15: 성공 응답 구조는 지인이 vworld 공식 API 레퍼런스 페이지의 "API결과
+미리보기" 버튼으로 받아온 실제 XML 원본(REAL_SUCCESS_XML)으로 검증됨 — 이 파일의
+성공 케이스 테스트는 진짜 골든 테스트다.
 
-⚠️ 성공("OK") 응답 쪽은 여전히 미검증이다 — 레이어 ID(`VWORLD_HOUSING_PRICE_LAYER_ID`)를
-아직 못 찾아서 성공 응답을 한 번도 못 받아봤다. FAKE_OK_RESPONSE/FAKE_EMPTY_RESPONSE는
-여전히 추측 픽스처이니, 실제 성공 응답을 받으면 반드시 다시 맞출 것.
+⚠️ 에러 응답이 XML로도 같은 구조로 오는지는 아직 실제로 확인 못 했다 (2026-09-14에
+확인한 에러 봉투는 다른 엔드포인트를 JSON으로 호출해서 받은 것). REAL_ERROR_XML은
+그 JSON 구조를 XML 태그로 옮겨 적은 추정 픽스처다 — 실제 에러를 XML로 받아보면
+다시 맞출 것.
 """
 
 import unittest
@@ -18,74 +20,102 @@ from public_price_adapter import (
     fetch_public_price,
 )
 
-# 실제 vworld 응답 원본 (2026-09-15, PARAM_REQUIRED 에러를 일부러 유도해서 받음).
-# service/status/error 봉투 구조 자체가 검증된 골든 픽스처 — 함부로 고치지 말 것.
-REAL_PARAM_REQUIRED_ERROR = {
-    "response": {
-        "service": {"name": "data", "version": "2.0", "operation": "GetFeature", "time": "6(ms)"},
-        "status": "ERROR",
-        "error": {
-            "level": "1",
-            "code": "PARAM_REQUIRED",
-            "text": "필수 파라미터인 data가 없어서 요청을 처리할수 없습니다.",
-        },
-    }
-}
+# 실제 vworld 응답 원본 (2026-09-15, 공식 API 레퍼런스 페이지 "API결과 미리보기"로 확인).
+# 서울 마포구 상암동 상암월드컵1단지 101동 201호 — 골든 픽스처, 함부로 고치지 말 것.
+REAL_SUCCESS_XML = """<response>
+  <numOfRows>10</numOfRows>
+  <pageNo>1</pageNo>
+  <totalCount>1</totalCount>
+  <fields>
+    <field>
+      <pnu>1144012700116340000</pnu>
+      <idCode>1144012700</idCode>
+      <idCodeNm>서울특별시 마포구 상암동</idCodeNm>
+      <regstrSeCode>1</regstrSeCode>
+      <regstrSeCodeNm>일반</regstrSeCodeNm>
+      <mnnmSlno>1634</mnnmSlno>
+      <stdrYear>2012</stdrYear>
+      <stdrMt>01</stdrMt>
+      <aphusCode>20022499</aphusCode>
+      <aphusSeCode>1</aphusSeCode>
+      <aphusSeCodeNm>아파트</aphusSeCodeNm>
+      <spclLandNm>상암택지개발사업지구2-1블럭</spclLandNm>
+      <aphusNm>상암월드컵1단지</aphusNm>
+      <dongNm>101</dongNm>
+      <floorNm>2</floorNm>
+      <hoNm>201</hoNm>
+      <prvuseAr>39.66</prvuseAr>
+      <pblntfPc>60000000</pblntfPc>
+      <lastUpdtDt>2023-08-24</lastUpdtDt>
+    </field>
+  </fields>
+</response>"""
 
-# ⚠️ 아래부터는 여전히 미검증 추측 픽스처 (성공 응답 구조 미확인)
-FAKE_OK_RESPONSE = {
-    "response": {
-        "status": "OK",
-        "result": {
-            "featureCollection": {
-                "features": [
-                    {"properties": {"price": "45000", "pnu": "1168010500001590000"}},
-                ]
-            }
-        },
-    }
-}
+REAL_NO_RESULT_XML = """<response>
+  <numOfRows>10</numOfRows>
+  <pageNo>1</pageNo>
+  <totalCount>0</totalCount>
+  <fields></fields>
+</response>"""
 
-FAKE_EMPTY_RESPONSE = {
-    "response": {
-        "status": "OK",
-        "result": {"featureCollection": {"features": []}},
-    }
-}
+# 하나의 pnu(단지 전체)에 여러 동/호가 함께 돌아오는 경우를 가정한 픽스처
+# (dongNm/hoNm을 생략하고 조회했을 때를 대비 — 실제로 이렇게 오는지는 미확인).
+MULTIPLE_FIELDS_XML = """<response>
+  <numOfRows>100</numOfRows>
+  <pageNo>1</pageNo>
+  <totalCount>3</totalCount>
+  <fields>
+    <field><dongNm>101</dongNm><hoNm>101</hoNm><pblntfPc>400000000</pblntfPc></field>
+    <field><dongNm>101</dongNm><hoNm>201</hoNm><pblntfPc>450000000</pblntfPc></field>
+    <field><dongNm>102</dongNm><hoNm>301</hoNm><pblntfPc>500000000</pblntfPc></field>
+  </fields>
+</response>"""
+
+# ⚠️ 미검증 추정 픽스처 — 2026-09-14에 확인한 JSON 에러 봉투를 XML 태그로 옮겨 적은 것.
+# 실제로 이 XML 구조로 오는지는 아직 확인 안 됨.
+ASSUMED_ERROR_XML = """<response>
+  <status>ERROR</status>
+  <error>
+    <level>1</level>
+    <code>PARAM_REQUIRED</code>
+    <text>필수 파라미터인 pnu가 없어서 요청을 처리할수 없습니다.</text>
+  </error>
+</response>"""
+
+NOT_EVEN_XML = "<<< this is not xml at all"
 
 
 class TestParseResponse(unittest.TestCase):
 
-    def test_real_param_required_error_raises_with_code_and_text(self):
-        # 골든 픽스처 — 실제 vworld 응답 그대로
+    def test_real_success_xml_converts_won_to_manwon(self):
+        # 골든 픽스처 — pblntfPc=60,000,000원 -> 6,000만원
+        self.assertEqual(_parse_response(REAL_SUCCESS_XML), 6000)
+
+    def test_real_no_result_xml_returns_none(self):
+        # 골든 픽스처 — totalCount=0, fields 비어있음
+        self.assertIsNone(_parse_response(REAL_NO_RESULT_XML))
+
+    def test_multiple_fields_uses_median(self):
+        # 400,000,000 / 450,000,000 / 500,000,000원 -> 중위값 450,000,000원 -> 45,000만원
+        self.assertEqual(_parse_response(MULTIPLE_FIELDS_XML), 45000)
+
+    def test_assumed_error_xml_raises_with_code_and_text(self):
         with self.assertRaises(PublicPriceApiError) as ctx:
-            _parse_response(REAL_PARAM_REQUIRED_ERROR)
+            _parse_response(ASSUMED_ERROR_XML)
         self.assertIn("PARAM_REQUIRED", str(ctx.exception))
-        self.assertIn("data가 없어서", str(ctx.exception))
 
-    def test_extracts_price_from_known_shape(self):
-        self.assertEqual(_parse_response(FAKE_OK_RESPONSE), 45000)
-
-    def test_no_features_returns_none(self):
-        self.assertIsNone(_parse_response(FAKE_EMPTY_RESPONSE))
-
-    def test_unexpected_status_value_raises(self):
+    def test_broken_xml_raises(self):
         with self.assertRaises(PublicPriceApiError):
-            _parse_response({"response": {"status": "NOT_A_REAL_STATUS"}})
+            _parse_response(NOT_EVEN_XML)
 
-    def test_unexpected_shape_raises(self):
+    def test_missing_fields_element_raises(self):
         with self.assertRaises(PublicPriceApiError):
-            _parse_response({"totally": "unexpected"})
+            _parse_response("<response><numOfRows>10</numOfRows></response>")
 
     def test_missing_price_field_raises(self):
-        payload = {
-            "response": {
-                "status": "OK",
-                "result": {"featureCollection": {"features": [{"properties": {"foo": "bar"}}]}},
-            }
-        }
+        xml = """<response><fields><field><dongNm>101</dongNm></field></fields></response>"""
         with self.assertRaises(PublicPriceApiError):
-            _parse_response(payload)
+            _parse_response(xml)
 
 
 class TestFetchPublicPrice(unittest.TestCase):
@@ -93,38 +123,25 @@ class TestFetchPublicPrice(unittest.TestCase):
     @patch("public_price_adapter.VWORLD_API_KEY", None)
     @patch("public_price_adapter.requests.get")
     def test_no_api_key_returns_error_without_network_call(self, mock_get):
-        result = fetch_public_price("1168010500001590000")
+        result = fetch_public_price("1144012700116340000")
 
         self.assertEqual(result, {"status": "error", "reason": "invalid_request"})
         mock_get.assert_not_called()
 
     @patch("public_price_adapter.VWORLD_API_KEY", "fake-key")
-    @patch("public_price_adapter.DATA_LAYER_ID", "TODO_CONFIRM_LAYER_ID")
     @patch("public_price_adapter.requests.get")
-    def test_placeholder_layer_id_returns_error_without_network_call(self, mock_get):
-        # 레이어 ID를 아직 확인 못 한 상태(기본 플레이스홀더)에서는 vworld에 잘못된
-        # 요청을 계속 보내지 않도록 여기서 막아야 한다.
-        result = fetch_public_price("1168010500001590000")
-
-        self.assertEqual(result, {"status": "error", "reason": "invalid_request"})
-        mock_get.assert_not_called()
-
-    @patch("public_price_adapter.VWORLD_API_KEY", "fake-key")
-    @patch("public_price_adapter.DATA_LAYER_ID", "some_confirmed_layer")
-    @patch("public_price_adapter.requests.get")
-    def test_ok_when_key_and_layer_configured(self, mock_get):
-        mock_get.return_value = Mock(json=lambda: FAKE_OK_RESPONSE)
+    def test_ok_with_real_response_shape(self, mock_get):
+        mock_get.return_value = Mock(text=REAL_SUCCESS_XML)
         mock_get.return_value.raise_for_status.return_value = None
 
-        result = fetch_public_price("1168010500001590000")
+        result = fetch_public_price("1144012700116340000")
 
-        self.assertEqual(result, {"status": "ok", "data": {"publicPrice": 45000}})
+        self.assertEqual(result, {"status": "ok", "data": {"publicPrice": 6000}})
 
     @patch("public_price_adapter.VWORLD_API_KEY", "fake-key")
-    @patch("public_price_adapter.DATA_LAYER_ID", "some_confirmed_layer")
     @patch("public_price_adapter.requests.get")
-    def test_not_found_when_no_features(self, mock_get):
-        mock_get.return_value = Mock(json=lambda: FAKE_EMPTY_RESPONSE)
+    def test_not_found_when_no_fields(self, mock_get):
+        mock_get.return_value = Mock(text=REAL_NO_RESULT_XML)
         mock_get.return_value.raise_for_status.return_value = None
 
         result = fetch_public_price("1168010500001590000")
@@ -132,22 +149,9 @@ class TestFetchPublicPrice(unittest.TestCase):
         self.assertEqual(result, {"status": "not_found"})
 
     @patch("public_price_adapter.VWORLD_API_KEY", "fake-key")
-    @patch("public_price_adapter.DATA_LAYER_ID", "some_confirmed_layer")
     @patch("public_price_adapter.requests.get")
-    def test_unexpected_response_shape_maps_to_invalid_request(self, mock_get):
-        mock_get.return_value = Mock(json=lambda: {"totally": "unexpected"})
-        mock_get.return_value.raise_for_status.return_value = None
-
-        result = fetch_public_price("1168010500001590000")
-
-        self.assertEqual(result, {"status": "error", "reason": "invalid_request"})
-
-    @patch("public_price_adapter.VWORLD_API_KEY", "fake-key")
-    @patch("public_price_adapter.DATA_LAYER_ID", "some_confirmed_layer")
-    @patch("public_price_adapter.requests.get")
-    def test_real_vworld_error_response_maps_to_invalid_request(self, mock_get):
-        # 골든 픽스처(실제 vworld 응답)를 fetch_public_price 전체 경로로 흘려보내는 테스트.
-        mock_get.return_value = Mock(json=lambda: REAL_PARAM_REQUIRED_ERROR)
+    def test_broken_response_maps_to_invalid_request(self, mock_get):
+        mock_get.return_value = Mock(text=NOT_EVEN_XML)
         mock_get.return_value.raise_for_status.return_value = None
 
         result = fetch_public_price("1168010500001590000")

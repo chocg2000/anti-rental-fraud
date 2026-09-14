@@ -1,20 +1,23 @@
 """
-디버그용: 브이월드(VWorld) API를 어댑터 없이 직접 호출해서
+디버그용: 브이월드(VWorld) 공동주택가격속성조회 API를 어댑터 없이 직접 호출해서
 진짜 응답 구조(성공/에러 형식, 필드명)를 그대로 확인한다.
 
+엔드포인트/파라미터는 vworld 공식 API 레퍼런스 페이지로 확인됨(2026-09-15):
+  GET https://api.vworld.kr/ned/data/getApartHousingPriceAttr
+
 ★ vworld 키를 받으면 이 스크립트부터 돌려볼 것 — public_price_adapter.py의
-  _parse_response()가 추측으로 짜여 있어서, 실제 응답을 보기 전까지는 신뢰할 수 없다.
+  _parse_response()가 성공("OK") 응답의 봉투 구조를 여전히 추측으로 짜놨어서,
+  실제 응답을 보기 전까지는 신뢰할 수 없다.
 
 실행 전 준비:
-  1. .env에 VWORLD_API_KEY, (필요시) VWORLD_DOMAIN 설정
-  2. 아래 TEST_PNU를 실제 확인해보고 싶은 매물의 PNU로 바꾼다
-     (address_resolver.resolve_address() 결과의 "pnu" 필드에서 얻을 수 있음)
-  3. python debug_vworld_call.py
+  .env에 VWORLD_API_KEY, (필요시) VWORLD_DOMAIN 설정
 
-이 스크립트가 출력하는 원본 응답을 보고:
-  - 최상위 구조가 뭔지 (response/result/... 경로가 실제로 맞는지)
-  - 가격 필드의 실제 이름이 뭔지
-  를 확인한 뒤 public_price_adapter.py의 _parse_response()를 실제 구조에 맞게 고칠 것.
+이 머신이 vworld API 접속 자체가 불안정하면(연결 끊김/502) 이 스크립트가 실패할 수
+있다 — 그럴 땐 아래 TEST_PNU로 만든 URL을 브라우저에서 대신 열어볼 링크로 만들어
+한국 IP를 쓰는 사람에게 부탁하는 방식을 쓸 것 (vworld_test_link.txt와 같은 패턴).
+
+이 스크립트가 출력하는 원본 응답을 보고 public_price_adapter.py의 _parse_response()를
+실제 구조에 맞게 고칠 것 (에러 분기는 이미 실제 응답으로 검증돼 있어 안 건드려도 됨).
 """
 
 import os
@@ -26,9 +29,13 @@ load_dotenv()
 
 VWORLD_API_KEY = os.environ.get("VWORLD_API_KEY", "")
 VWORLD_DOMAIN = os.environ.get("VWORLD_DOMAIN", "localhost")
+VWORLD_URL = "https://api.vworld.kr/ned/data/getApartHousingPriceAttr"
 
-# 서울 강남구 삼성동 159 (이 프로젝트에서 계속 써온 테스트 주소) — 실제 매물 PNU로 바꿔도 됨
-TEST_PNU = "1168010500001590000"
+# vworld 공식 API 레퍼런스 페이지의 샘플데이터 그대로 (경기도 성남시 분당구 상암동
+# 언저리가 아니라 실제로는 서울 마포구 상암동 상암월드컵1단지 101동 201호로 보임)
+TEST_PNU = "1144012700116340000"
+TEST_DONG_NM = "101"
+TEST_HO_NM = "201"
 
 
 def main():
@@ -38,51 +45,41 @@ def main():
 
     print(f"[사용 도메인] {VWORLD_DOMAIN} (키 발급 시 등록한 도메인과 다르면 거부당할 수 있음)\n")
 
-    # 데이터셋 이름(레이어 ID)을 아직 모르므로, 우선 vworld가 제공하는 데이터 목록 조회부터
-    # 시도해본다 — 이게 되면 최소한 키/도메인은 유효하다는 뜻이고, 목록에서 공동주택가격
-    # 관련 레이어 이름을 직접 찾을 수 있을 가능성이 있다.
     print("=" * 60)
-    print("1단계: 데이터 API 기본 호출 (키/도메인 유효성 확인)")
+    print(f"1단계: 공식 샘플데이터로 조회 (pnu={TEST_PNU}, dongNm={TEST_DONG_NM}, hoNm={TEST_HO_NM})")
     print("=" * 60)
     params = {
-        "service": "data",
-        "request": "GetFeature",
+        "pnu": TEST_PNU,
+        "dongNm": TEST_DONG_NM,
+        "hoNm": TEST_HO_NM,
         "key": VWORLD_API_KEY,
         "domain": VWORLD_DOMAIN,
-        "format": "json",
+        "format": "xml",
+        "numOfRows": 10,
+        "pageNo": 1,
     }
     try:
-        res = requests.get("https://api.vworld.kr/req/data", params=params, timeout=10)
+        res = requests.get(VWORLD_URL, params=params, timeout=10)
         print(f"status_code: {res.status_code}")
-        print(f"응답:\n{res.text[:2000]}")
+        print(f"응답:\n{res.text[:3000]}")
     except Exception as e:
         print(f"[예외 발생] {type(e).__name__}: {e}")
 
     print("\n" + "=" * 60)
-    print(f"2단계: PNU({TEST_PNU})로 공동주택가격 조회 시도 (레이어 ID는 추측값)")
+    print(f"2단계: dongNm/hoNm 없이 pnu만으로 조회 (여러 동/호가 함께 오는지 확인)")
     print("=" * 60)
-    from public_price_adapter import DATA_LAYER_ID
-
-    print(f"현재 설정된 DATA_LAYER_ID: {DATA_LAYER_ID}")
-    if DATA_LAYER_ID == "TODO_CONFIRM_LAYER_ID":
-        print("[안내] 아직 레이어 ID가 확정 안 돼서 이 단계는 건너뜁니다.")
-        print("       1단계 응답이나 vworld 데이터 카탈로그에서 정확한 이름을 찾은 뒤")
-        print("       .env의 VWORLD_HOUSING_PRICE_LAYER_ID에 넣고 다시 실행하세요.")
-        return
-
     params = {
-        "service": "data",
-        "request": "GetFeature",
-        "data": DATA_LAYER_ID,
+        "pnu": TEST_PNU,
         "key": VWORLD_API_KEY,
         "domain": VWORLD_DOMAIN,
-        "format": "json",
-        "attrFilter": f"pnu:=:{TEST_PNU}",
+        "format": "xml",
+        "numOfRows": 100,
+        "pageNo": 1,
     }
     try:
-        res = requests.get("https://api.vworld.kr/req/data", params=params, timeout=10)
+        res = requests.get(VWORLD_URL, params=params, timeout=10)
         print(f"status_code: {res.status_code}")
-        print(f"응답:\n{res.text[:2000]}")
+        print(f"응답:\n{res.text[:3000]}")
     except Exception as e:
         print(f"[예외 발생] {type(e).__name__}: {e}")
 
