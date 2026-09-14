@@ -122,7 +122,8 @@ def run_full_assessment(
         }
     else:
         deposit_risk = check_deposit_priority_risk(
-            market_price_won, senior_secured_amount, my_deposit, property_type
+            market_price_won, senior_secured_amount, my_deposit, property_type,
+            market_price_confidence=property_info["marketPriceConfidence"],
         )
 
     identity_check = check_landlord_identity_match(contract_landlord_name, registry_owners)

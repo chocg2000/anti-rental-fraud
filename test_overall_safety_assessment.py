@@ -87,6 +87,22 @@ class TestAssessOverallSafety(unittest.TestCase):
         )
         self.assertEqual(result["overallGrade"], "safe")
 
+    def test_price_is_estimated_bumps_safe_to_caution(self):
+        # 시세가 공시가격 추정치 기반이면 위험 판정이 "안전"으로 나와도 최소 caution
+        tenancy = make_tenancy_safety(deposit_risky=False, identity_level="safe")
+        tenancy["depositPriorityRisk"]["priceIsEstimated"] = True
+        result = assess_overall_safety(tenancy)
+        self.assertEqual(result["overallGrade"], "caution")
+        self.assertTrue(any("공시가격 추정치" in r for r in result["reasons"]))
+
+    def test_price_is_estimated_does_not_downgrade_higher_grade(self):
+        # 이미 danger인 상태에서 추정치 경고가 붙어도 danger가 유지돼야 함(다운그레이드 금지)
+        tenancy = make_tenancy_safety(deposit_risky=True, identity_level="danger")
+        tenancy["depositPriorityRisk"]["priceIsEstimated"] = True
+        result = assess_overall_safety(tenancy)
+        self.assertEqual(result["overallGrade"], "danger")
+        self.assertTrue(any("공시가격 추정치" in r for r in result["reasons"]))
+
     def test_real_document_scenario_combined(self):
         # 실제 검증 문서 기준: 임대인 불일치(danger) + 깡통전세 위험(warning) 동시 발생
         tenancy = {

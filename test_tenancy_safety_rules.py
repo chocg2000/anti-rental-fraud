@@ -54,6 +54,41 @@ class TestDepositPriorityRisk(unittest.TestCase):
         # 5억 <= 6억*0.8=4.8억? -> 5억 > 4.8억 이므로 위험
         self.assertTrue(result["riskyDepositPriority"])
 
+    def test_default_confidence_is_high_and_not_flagged_as_estimated(self):
+        # market_price_confidence를 안 넘기면 기존 호출부(vworld 연동 전)와 100% 호환돼야 함
+        result = check_deposit_priority_risk(
+            market_price=500_000_000, senior_secured_amount=0, my_deposit=300_000_000,
+        )
+        self.assertEqual(result["marketPriceConfidence"], "high")
+        self.assertFalse(result["priceIsEstimated"])
+        self.assertNotIn("공시가격 추정치", result["reason"])
+
+    def test_estimated_from_public_price_flags_and_appends_caution(self):
+        result = check_deposit_priority_risk(
+            market_price=500_000_000, senior_secured_amount=0, my_deposit=300_000_000,
+            property_type="villa", market_price_confidence="estimated_from_public_price",
+        )
+        self.assertTrue(result["priceIsEstimated"])
+        self.assertEqual(result["marketPriceConfidence"], "estimated_from_public_price")
+        self.assertIn("공시가격 추정치", result["reason"])
+
+    def test_estimated_from_public_price_still_computes_risk_correctly(self):
+        # 신뢰도 캡션이 붙어도 위험/안전 판정 자체(숫자 비교)는 그대로 정확해야 함
+        result = check_deposit_priority_risk(
+            market_price=500_000_000, senior_secured_amount=100_000_000, my_deposit=300_000_000,
+            property_type="villa", market_price_confidence="estimated_from_public_price",
+        )
+        # 100,000,000 + 300,000,000 = 400,000,000 > 350,000,000 -> 위험 (test_risky_when_exceeds_threshold와 동일 수치)
+        self.assertTrue(result["riskyDepositPriority"])
+
+    def test_low_confidence_is_not_flagged_as_estimated(self):
+        # "low"(실거래가 기반, 면적/기간만 넓힌 것)는 공시가격 추정과는 다르므로 캡션 대상 아님
+        result = check_deposit_priority_risk(
+            market_price=500_000_000, senior_secured_amount=0, my_deposit=300_000_000,
+            market_price_confidence="low",
+        )
+        self.assertFalse(result["priceIsEstimated"])
+
 
 class TestLandlordIdentityMatch(unittest.TestCase):
 
@@ -119,6 +154,18 @@ class TestEvaluateTenancySafetyIntegration(unittest.TestCase):
         )
         self.assertTrue(result["depositPriorityRisk"]["riskyDepositPriority"])
         self.assertEqual(result["landlordIdentityCheck"]["riskLevel"], "danger")
+
+    def test_market_price_confidence_forwarded_to_deposit_risk(self):
+        result = evaluate_tenancy_safety(
+            market_price=600_000_000,
+            senior_secured_amount=300_000_000,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            registry_owners=[{"ownerName": "조춘근", "shareType": "단독소유"}],
+            property_type="multi_household",
+            market_price_confidence="estimated_from_public_price",
+        )
+        self.assertTrue(result["depositPriorityRisk"]["priceIsEstimated"])
 
 
 if __name__ == "__main__":

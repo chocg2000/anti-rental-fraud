@@ -27,12 +27,15 @@ YATAP_REGISTRY_OCR_TEXT = """주요 등기사항 요약 (참고용)
 """
 
 
-def make_property_info(market_price=60_000, building=None, violation_confirmed=False, violation_raw=None):
+def make_property_info(market_price=60_000, building=None, violation_confirmed=False, violation_raw=None,
+                        confidence=None):
     """market_price는 만원 단위 (property_aggregator/market_price_estimator 규약)."""
+    if confidence is None:
+        confidence = "high" if market_price is not None else "unavailable"
     return {
         "normalizedAddress": {"roadAddress": "경기 성남시 분당구 장미로 101"},
         "marketPrice": market_price,
-        "marketPriceConfidence": "high" if market_price is not None else "unavailable",
+        "marketPriceConfidence": confidence,
         "marketPriceBasis": "test fixture",
         "building": building,
         "registrySeparated": True,
@@ -118,6 +121,54 @@ class TestMarketPriceUnitConversion(unittest.TestCase):
         self.assertTrue(result["tenancySafety"]["depositPriorityRisk"]["riskyDepositPriority"])
         self.assertEqual(result["tenancySafety"]["landlordIdentityCheck"]["riskLevel"], "danger")
         self.assertEqual(result["overallGrade"], "danger")
+
+
+class TestMarketPriceConfidenceWiring(unittest.TestCase):
+    """
+    property_info.marketPriceConfidence(예: vworld 공시가격 폴백을 썼다는 신호)가
+    tenancy_safety_rules까지 끊기지 않고 전달되는지 검증 (오늘 vworld 연동을 실제로
+    붙이면서 드러난 갭 — 시세 출처를 몰라도 위험 판정 자체는 항상 가능했지만, 그 판단이
+    실거래가 기반인지 공시가격 추정치 기반인지는 유저에게 전혀 안 보여주고 있었음).
+    """
+
+    @patch("full_assessment.get_property_info")
+    def test_estimated_from_public_price_confidence_flows_through_to_caution(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(
+            market_price=60_000, confidence="estimated_from_public_price",
+        )
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+        )
+
+        deposit_risk = result["tenancySafety"]["depositPriorityRisk"]
+        self.assertTrue(deposit_risk["priceIsEstimated"])
+        # 이 시나리오 자체는 안전(위 유닛변환 테스트와 동일 수치)이지만, 추정치 기반이라
+        # 최종 등급은 safe가 아니라 caution 이상이어야 한다.
+        self.assertFalse(deposit_risk["riskyDepositPriority"])
+        self.assertEqual(result["overallGrade"], "caution")
+        self.assertTrue(any("공시가격 추정치" in r for r in result["reasons"]))
+
+    @patch("full_assessment.get_property_info")
+    def test_high_confidence_does_not_trigger_estimation_caution(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000, confidence="high")
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+        )
+
+        self.assertFalse(result["tenancySafety"]["depositPriorityRisk"]["priceIsEstimated"])
+        self.assertEqual(result["overallGrade"], "safe")
 
 
 class TestUserConfirmedViolationBuilding(unittest.TestCase):

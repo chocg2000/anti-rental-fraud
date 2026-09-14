@@ -25,6 +25,7 @@ def check_deposit_priority_risk(
     senior_secured_amount: int,
     my_deposit: int,
     property_type: str = "villa",
+    market_price_confidence: str = "high",
 ) -> dict:
     """
     룰 1: [시세 × 안전비율]보다 [선순위 채권 총액 + 내 보증금]이 크면 깡통전세 위험.
@@ -36,6 +37,12 @@ def check_deposit_priority_risk(
         my_deposit: 내가 들어갈 보증금 (원 단위)
         property_type: "apartment" | "villa" | "officetel" | "multi_household"
                        유형별로 안전 임계 비율이 다르다 (아파트 80%, 그 외 70%).
+        market_price_confidence: market_price_estimator.estimate_market_price()의
+            confidence 값("high"|"low"|"estimated_from_public_price"|"unavailable")을
+            그대로 전달받는다. "estimated_from_public_price"(실거래가 없이 공시가격×1.4로
+            추정한 값)인 경우, 이 계산 자체는 그대로 수행하되 그 판단 근거가 실거래가만큼
+            믿을 만하지 않다는 걸 결과에 명시적으로 남긴다 — 공시가격 연동 전에는
+            이 값을 안 넘기면 기본값 "high"로 동작해 기존 호출부와 100% 호환된다.
     """
     if market_price is None:
         return {
@@ -48,19 +55,30 @@ def check_deposit_priority_risk(
     total_priority_claims = senior_secured_amount + my_deposit
     is_risky = total_priority_claims > safe_threshold
 
+    reason = (
+        f"선순위 채권({senior_secured_amount:,}원) + 내 보증금({my_deposit:,}원) = "
+        f"{total_priority_claims:,}원이 시세의 {int(safe_ratio*100)}%인 "
+        f"{round(safe_threshold):,}원을 {'초과' if is_risky else '초과하지 않음'}"
+    )
+
+    price_is_estimated = market_price_confidence == "estimated_from_public_price"
+    if price_is_estimated:
+        reason += (
+            " (참고: 이 시세는 실거래가가 아니라 공시가격 추정치를 기반으로 계산되었습니다 "
+            "— 실제 매매가와 차이가 있을 수 있어 신뢰도가 제한적입니다.)"
+        )
+
     return {
         "riskyDepositPriority": is_risky,
         "marketPrice": market_price,
+        "marketPriceConfidence": market_price_confidence,
+        "priceIsEstimated": price_is_estimated,
         "safeRatio": safe_ratio,
         "safeThreshold": round(safe_threshold),
         "seniorSecuredAmount": senior_secured_amount,
         "myDeposit": my_deposit,
         "totalPriorityClaims": total_priority_claims,
-        "reason": (
-            f"선순위 채권({senior_secured_amount:,}원) + 내 보증금({my_deposit:,}원) = "
-            f"{total_priority_claims:,}원이 시세의 {int(safe_ratio*100)}%인 "
-            f"{round(safe_threshold):,}원을 {'초과' if is_risky else '초과하지 않음'}"
-        ),
+        "reason": reason,
     }
 
 
@@ -139,9 +157,12 @@ def evaluate_tenancy_safety(
     contract_landlord_name: str,
     registry_owners: list[dict],
     property_type: str = "villa",
+    market_price_confidence: str = "high",
 ) -> dict:
     """룰 1 + 룰 2를 합쳐서 한 번에 결과를 낸다."""
-    deposit_risk = check_deposit_priority_risk(market_price, senior_secured_amount, my_deposit, property_type)
+    deposit_risk = check_deposit_priority_risk(
+        market_price, senior_secured_amount, my_deposit, property_type, market_price_confidence
+    )
     identity_check = check_landlord_identity_match(contract_landlord_name, registry_owners)
 
     return {

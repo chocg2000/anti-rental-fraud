@@ -61,6 +61,15 @@ def assess_overall_safety(
     elif deposit_risk.get("riskyDepositPriority") is None:
         reasons.append("시세 데이터 부족으로 깡통전세 위험 판단 불가 (참고용 미확인 표시 필요)")
 
+    # 깡통전세 판단 자체가 실거래가가 아니라 공시가격 추정치 기반이면(위험/안전 여부와
+    # 무관하게) 그 판단 근거의 신뢰도가 낮다는 걸 항상 별도로 알려야 한다.
+    if deposit_risk.get("priceIsEstimated"):
+        grade = _max_grade(grade, "caution")
+        reasons.append(
+            "깡통전세 위험 판단에 사용된 시세가 실거래가가 아닌 공시가격 추정치입니다 "
+            "— 참고용으로만 활용하세요."
+        )
+
     identity_check = tenancy_safety.get("landlordIdentityCheck", {})
     identity_risk_level = identity_check.get("riskLevel", "unknown")
     if identity_risk_level in ("caution", "warning", "danger"):
