@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import ScreenShell from '../components/ScreenShell'
 import { GradeIcon, IconChevronDown } from '../components/icons'
+import PossessionTimeline from '../components/PossessionTimeline'
 import { GRADE_META, RISK_BADGE, RISK_LABEL } from '../lib/grade'
 import { formatManwonAsKRW } from '../lib/format'
 
@@ -47,6 +48,8 @@ export default function Step3Result({ result, onRestart }) {
   const property = result.propertyInfo
   const deposit = result.tenancySafety?.depositPriorityRisk
   const identity = result.tenancySafety?.landlordIdentityCheck
+  const gapRisk = result.tenancySafety?.possessionPriorityGapRisk
+  const fixedDate = result.tenancySafety?.fixedDateRisk
   const fraud = result.fraudPatternResult
   const tax = result.taxClearanceResult
 
@@ -146,6 +149,37 @@ export default function Step3Result({ result, onRestart }) {
                 detail={identity.reason}
                 expanded={!!expanded.identity}
                 onToggle={() => toggle('identity')}
+              />
+            )}
+
+            {gapRisk && (
+              <Card
+                title="대항력 공백 위험"
+                badgeLabel={gapRisk.gapRiskDetected === null ? '확인 불가' : gapRisk.gapRiskDetected ? '위험' : '안전'}
+                badgeClass={gapRisk.gapRiskDetected === null ? RISK_BADGE.unknown : gapRisk.gapRiskDetected ? RISK_BADGE.danger : RISK_BADGE.safe}
+                summary={gapRisk.gapRiskDetected ? '잔금(입주)일 당일 접수된 권리가 있습니다' : gapRisk.reason}
+                detail={
+                  <div className="flex flex-col gap-3">
+                    <div>{gapRisk.reason}</div>
+                    {gapRisk.moveInDate && (
+                      <PossessionTimeline moveInDate={gapRisk.moveInDate} rightsTimeline={gapRisk.rightsTimeline} />
+                    )}
+                  </div>
+                }
+                expanded={!!expanded.gapRisk}
+                onToggle={() => toggle('gapRisk')}
+              />
+            )}
+
+            {fixedDate && (
+              <Card
+                title="확정일자 확보 여부"
+                badgeLabel={RISK_LABEL[fixedDate.riskLevel]}
+                badgeClass={RISK_BADGE[fixedDate.riskLevel]}
+                summary={fixedDate.reason}
+                detail={fixedDate.reason}
+                expanded={!!expanded.fixedDate}
+                onToggle={() => toggle('fixedDate')}
               />
             )}
 

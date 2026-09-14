@@ -202,16 +202,26 @@ def check_possession_priority_gap_risk(
     same_day_rights = [
         r for r in active_rights if r.get("receivedDate") == move_in_date
     ]
+    # 프론트가 잔금일 대비 등기부 접수일들을 시각적 타임라인으로 그릴 수 있도록, 날짜를
+    # 확인할 수 있는 권리만(추측 없이) 접수일 순으로 정리해 함께 내려준다.
+    dated_rights = sorted(
+        (r for r in active_rights if r.get("receivedDate")),
+        key=lambda r: r["receivedDate"],
+    )
 
     if not same_day_rights:
         return {
             "gapRiskDetected": False,
+            "moveInDate": move_in_date,
+            "rightsTimeline": dated_rights,
             "reason": "잔금(입주)일 당일에 새로 접수된 권리가 발견되지 않았습니다.",
         }
 
     names = ", ".join(f"{r.get('rightType', '권리')}({r.get('amount', 0):,}원)" for r in same_day_rights)
     return {
         "gapRiskDetected": True,
+        "moveInDate": move_in_date,
+        "rightsTimeline": dated_rights,
         "suspiciousRights": same_day_rights,
         "reason": (
             f"잔금(입주) 예정일({move_in_date}) 당일에 접수된 권리가 있습니다: {names}. "

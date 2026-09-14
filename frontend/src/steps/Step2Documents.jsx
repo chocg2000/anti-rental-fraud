@@ -14,6 +14,11 @@ const TAX_OPTIONS = [
   { id: 'no', label: '제출 안 함' },
 ]
 
+const FIXED_DATE_OPTIONS = [
+  { id: 'yes', label: '받았음' },
+  { id: 'no', label: '아직 안 받음' },
+]
+
 export default function Step2Documents({ documents, onChange, onSubmit, submitting, submitError, onDismissSubmitError }) {
   const fileInputRef = useRef(null)
   const toastMessage = documents.uploadError || submitError
@@ -265,6 +270,37 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
           {documents.taxChoice === 'no' && (
             <div className="text-xs leading-relaxed text-gray-400">
               미제출은 참고용 위험 신호로 진단 결과에 반영됩니다 (통상 계약 당일 발급받는 서류입니다).
+            </div>
+          )}
+        </div>
+
+        {/* Section D: fixed-date (확정일자) status */}
+        <div className="flex flex-col gap-2.5">
+          <div className="text-sm font-bold text-gray-900">
+            확정일자 <span className="font-normal text-gray-400">(선택)</span>
+          </div>
+
+          <div className="flex gap-2">
+            {FIXED_DATE_OPTIONS.map((opt) => {
+              const selected = documents.fixedDateChoice === opt.id
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => onChange((prev) => ({ ...prev, fixedDateChoice: opt.id }))}
+                  className={`h-11 flex-1 rounded-lg border text-[13px] font-semibold ${
+                    selected ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 bg-white text-gray-700'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+
+          {documents.fixedDateChoice === 'no' && (
+            <div className="text-xs leading-relaxed text-gray-400">
+              확정일자가 없으면 경매로 넘어가도 보증금을 우선 돌려받는 우선변제권이 발생하지 않습니다 — 계약 즉시 주민센터나 인터넷등기소에서 받으세요.
             </div>
           )}
         </div>

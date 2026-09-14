@@ -117,6 +117,21 @@ export default function Step1Address({ form, onChange, onNext }) {
           />
         </div>
 
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[13px] font-semibold text-gray-700">
+            잔금(입주)일 <span className="font-normal text-gray-400">(선택, 전입신고 예정일)</span>
+          </label>
+          <input
+            type="date"
+            value={form.moveInDate}
+            onChange={set('moveInDate')}
+            className="h-12 rounded-lg border border-gray-300 px-3 text-sm text-gray-900 focus:border-gray-900 focus:outline-none"
+          />
+          <div className="text-[11px] text-gray-400">
+            등기부상 권리 접수일과 같은 날이면 대항력 공백 위험을 진단해드려요.
+          </div>
+        </div>
+
         <div className="flex flex-col gap-2">
           <label className="text-[13px] font-semibold text-gray-700">건물 유형</label>
           <div className="flex flex-wrap gap-2">

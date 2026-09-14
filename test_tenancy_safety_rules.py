@@ -223,6 +223,22 @@ class TestPossessionPriorityGapRisk(unittest.TestCase):
         self.assertIn("200,000,000", result["reason"])
         self.assertIn("2026-09-01", result["reason"])
 
+    def test_move_in_date_echoed_back_for_frontend_timeline(self):
+        # 프론트가 결과 화면만으로(폼 상태 없이) 타임라인을 그릴 수 있어야 하므로
+        # 안전/위험 판정과 무관하게 moveInDate를 그대로 돌려줘야 한다.
+        result = check_possession_priority_gap_risk("2026-09-01", [])
+        self.assertEqual(result["moveInDate"], "2026-09-01")
+
+    def test_rights_timeline_sorted_by_date_and_excludes_undated(self):
+        rights = [
+            right(right_type="근저당권설정", received_date="2026-09-02"),
+            right(right_type="전세권설정", received_date="2026-08-31"),
+            right(right_type="근저당권설정", received_date=None),
+        ]
+        result = check_possession_priority_gap_risk("2026-09-01", rights)
+        dates = [r["receivedDate"] for r in result["rightsTimeline"]]
+        self.assertEqual(dates, ["2026-08-31", "2026-09-02"])
+
 
 class TestFixedDateRisk(unittest.TestCase):
 

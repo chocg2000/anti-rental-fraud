@@ -13,6 +13,7 @@ const initialForm = {
   myDeposit: '',
   contractLandlordName: '',
   propertyType: 'villa',
+  moveInDate: '',
 }
 
 const initialDocuments = {
@@ -24,6 +25,7 @@ const initialDocuments = {
   taxChoice: null,
   taxDocLandlordName: '',
   taxIssueDate: '',
+  fixedDateChoice: null,
 }
 
 function isStep1Complete(form) {
@@ -65,6 +67,14 @@ function AppRoutes() {
       contract_landlord_name: form.contractLandlordName.trim(),
       property_type: form.propertyType,
       user_confirmed_violation_building: documents.violationChoice === 'violation',
+    }
+    if (form.moveInDate) {
+      payload.move_in_date = form.moveInDate
+    }
+    if (documents.fixedDateChoice === 'yes') {
+      payload.has_fixed_date = true
+    } else if (documents.fixedDateChoice === 'no') {
+      payload.has_fixed_date = false
     }
     if (documents.uploadState === 'uploaded' && documents.registryOcrText.trim() !== '') {
       payload.registry_ocr_text = documents.registryOcrText
