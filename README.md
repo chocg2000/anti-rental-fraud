@@ -488,25 +488,33 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
 
 ## 다음 단계 후보 (우선순위는 상황에 따라 조정)
 
-### 🎯 지금 최우선: 실제 Docker 빌드 + 국내 리전 실서버 배포/검증
+### 🎯 지금 최우선: 외부 리소스가 있어야만 풀리는 3개 과제
 
-지금까지 로직·정적 검토·유닛테스트로 할 수 있는 건 다 했다. 남은 건 전부 "실제 환경이
-있어야만" 확인 가능한 것들이라, 다음 세션은 이 하나의 흐름으로 묶어서 진행할 것:
+로컬 환경에서 로직·정적 검토·유닛테스트(현재 286개)만으로 도달할 수 있는 완성도에는
+도달했다. 남은 건 전부 "실제 시크릿 키/물리 환경이 있어야만" 검증 가능한 것들이고,
+추측으로는 더 못 좁힌다. 아래 3개는 서로 독립적이라 준비되는 대로 아무 순서로나
+진행하면 된다 — 다만 셋 다 끝나야 "로컬에서만 검증된 상태"를 벗어난다.
 
-1. **Docker 설치된 환경 확보** (이 개발 머신엔 Docker 자체가 없음 — 클라우드 인스턴스든
-   다른 로컬 머신이든 Docker가 도는 곳 필요).
-2. **`docker compose up --build` 최초 실행** — 아래 "Docker 배포 스캐폴딩" 섹션에서
-   정적 검토로 잡아둔 버그(VWorld env 누락, SQLite 경로 고정)가 실제로 의도대로
-   동작하는지 확인. 특히:
-   - 컨테이너 안에서 `/app/data/assessments.db`가 실제로 생성되는지, `docker compose
-     down && up`을 반복해도 이전 `/result/:id` 결과가 살아있는지 확인.
-   - `tesseract`/`poppler`가 apt-get 설치만으로 `POST /registry/upload`에서 실제로
-     동작하는지 확인 (Windows 포터블 설치와 다른 경로라 처음 겪는 조합).
-3. **국내 리전 서버 준비** (배포 타깃 미정 — 클라우드사/리전 먼저 정할 것, 예:
-   AWS `ap-northeast-2`). 국내 IP가 확보되면 위 "VWorld 배포 서버 검증 체크리스트"
-   섹션 순서대로 `debug_vworld_call.py` → 엔드투엔드 폴백 검증까지 진행.
-4. 위 1~3이 끝나야 이 프로젝트가 "로컬에서만 검증된 상태"를 벗어난다 — 그 전까지는
-   VWorld/Docker 관련 모든 항목이 잠정적으로 미완성 상태로 취급할 것.
+**국내 리전 서버 환경이 준비되면:**
+- [ ] `debug_vworld_call.py` 실행 — 싱가포르 IP 차단벽이 풀린 상태에서 공시가격 API
+      수신 확인 (위 "VWorld 배포 서버 검증 체크리스트" 섹션 순서 그대로)
+- [ ] `POST /assessment` 엔드투엔드 검증 — 비아파트 매물의
+      `marketPriceConfidence: "estimated_from_public_price"` 폴백 흐름이 실제
+      네트워크로도 똑같이 동작하는지 확인
+
+**네이버 클라우드 플랫폼(NCP) 클로바 OCR 키를 확보하면:**
+- [ ] `debug_clova_ocr_call.py` 실행 — 실제 갑구 스캔 이미지로 원본 응답 구조부터
+      확인 (위 "네이버 클로바 OCR 연동 설계" 섹션의 검증 순서 ①~④ 그대로)
+- [ ] `gapgu_ocr_row_parser.split_line_into_row()`(5개 컬럼 분리, 미검증 영역)를
+      실제 레이아웃에 맞게 보정 — 안 맞으면 이 함수만 고치면 됨(`parse_gapgu()`는
+      안 건드려도 됨)
+
+**Docker가 설치된 환경이 준비되면:**
+- [ ] `docker compose up --build` 최초 실행 — 정적 검토로 잡아둔 버그(VWorld env
+      누락, SQLite 경로 고정)가 실제로 의도대로 동작하는지 확인
+- [ ] `python:3.13-slim` 이미지 안에서 `poppler-utils`/`tesseract-ocr` 바이너리
+      패키징이 깨지지 않는지, `docker compose down && up`을 반복해도
+      `/app/data/assessments.db`(및 `/result/:id` 결과)가 살아있는지 확인
 
 ---
 
