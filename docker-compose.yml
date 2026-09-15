@@ -15,9 +15,16 @@ services:
       - MOLIT_SERVICE_KEY=${MOLIT_SERVICE_KEY}
       - VWORLD_API_KEY=${VWORLD_API_KEY}
       - VWORLD_DOMAIN=${VWORLD_DOMAIN}
+      # assessment_store.py의 기본값(상대경로 "data/assessments.db")은 WORKDIR가 /app이라
+      # 결과적으로 /app/data/assessments.db가 되어 아래 볼륨과 지금은 맞아떨어지지만, 그건
+      # Dockerfile의 WORKDIR와 우연히 일치하는 것일 뿐이다 — 나중에 WORKDIR를 바꾸거나
+      # CMD를 다른 방식(gunicorn 등)으로 바꾸면 조용히 볼륨 밖에 DB가 생겨 재배포마다
+      # 데이터가 날아가는 버그가 재발할 수 있다. 명시적으로 고정해서 그 암묵적 의존을 없앤다.
+      - ASSESSMENT_DB_PATH=/app/data/assessments.db
     volumes:
       # assessment_store.py(SQLite)의 결과 DB — 이 볼륨이 없으면 컨테이너를 재생성할 때마다
-      # (재배포, docker compose down/up 등) 진단 결과와 공유 링크가 전부 사라진다.
+      # (재배포, docker compose down/up 등) 진단 결과와 공유 링크가 전부 사라진다. 컨테이너
+      # 내부 경로는 반드시 위 ASSESSMENT_DB_PATH와 같은 디렉토리(/app/data)여야 한다.
       - ./data:/app/data
 
   frontend:
