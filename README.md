@@ -183,15 +183,58 @@ subprocess로 CLI 직접 호출), Windows는 이 실행파일들이 PATH에 자�
    참고) — 단, vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 불안정해서
    (연결 끊김 또는 502) 실제 검증은 지인의 브라우저를 거쳐서 했다. 이 머신에서 vworld를
    직접 못 두드리는 문제 자체는 해결 안 됐으니, 배포 서버(국내 리전)에서 최종 확인 필요.
-2. **등기부 본문(갑구) 소유권 이전 이력 확보 경로 미해결** — `registry_parser.py`와
-   `fraud_pattern_rules.py`(신축빌라+소유주변경 룰) 로직은 완성됐지만, 본문 OCR 정확도가
-   낮아서 실제 이력 데이터를 안정적으로 못 가져오는 상태. 상용 OCR API(네이버 CLOVA,
-   Upstage 등) 도입 검토 필요.
+2. **등기부 본문(갑구) 소유권 이전 이력 확보 경로** → **2026-09-15 설계+로직 착수,
+   실키 검증은 아직** (아래 "네이버 클로바 OCR 연동 설계" 섹션 참고). `registry_parser.py`
+   의 `parse_gapgu()`(테스트 12개 통과, 완성됨)는 그대로 두고, 그 앞단에 클로바 OCR
+   경로(`clova_ocr_adapter.py` + `gapgu_ocr_row_parser.py`)를 새로 붙였다 — 아직 실제
+   Naver Cloud Platform 계정/Secret Key로 한 번도 호출해본 적이 없어서 요청/응답 스펙은
+   공식 문서 기준으로만 짰다. 실제 키가 생기면 `debug_clova_ocr_call.py`부터 돌려서
+   검증할 것.
 3. ~~PDF 업로드 서버에 tesseract/poppler 미설치~~ → **2026-09-14 실환경(Windows) 검증
    완료** (아래 "Tesseract/Poppler 실환경 검증" 섹션 참고). 다만 이건 개발 머신(Windows)
    검증이고, 실제 배포 서버(Ubuntu/Debian 예정)에서는 `sudo apt-get install tesseract-ocr
    tesseract-ocr-kor poppler-utils`로 다시 한번 확인 필요 — PATH 자동 등록되는 환경이라
    `.env`의 `TESSERACT_CMD` 등은 안 넣어도 기본값(`"tesseract"`)으로 바로 동작할 것으로 예상.
+
+## 네이버 클로바 OCR 연동 설계 (2026-09-15) — ⚠️ 실키 미검증
+
+등기부 본문(갑구/을구) 페이지는 위변조 방지 배경무늬 때문에 Tesseract 정확도가 낮고,
+스캔 이미지라 pdfplumber도 텍스트를 못 뽑는다. 그래서 이 본문만 상용 OCR(네이버 클로바
+General, V2)로 대체하는 경로를 새로 열었다. **핵심은 여기서 새 판별 로직을 만들지
+않는다는 것** — `registry_parser.py`의 `parse_gapgu()`/`parse_eulgu()`는 이미 완성돼
+있고 테스트 12개가 통과한 상태였다(rank/purpose/receipt/cause/detail 딕셔너리 리스트를
+입력으로 받음). 진짜 빠져있던 건 "스캔 이미지에서 그 딕셔너리를 어떻게 뽑아내는가" 하나뿐.
+
+- **`clova_ocr_adapter.py`** — 클로바 General OCR(V2) 호출 어댑터. 요청 스펙(Invoke URL
+  형식, `X-OCR-SECRET` 헤더, `images[].format/name/data`, `version="V2"`)은
+  [네이버 공식 문서](https://api.ncloud-docs.com/docs/ai-application-service-ocr-ocr)로
+  확인. 키가 없으면 `public_price_adapter.py`와 같은 패턴으로 네트워크 호출 자체를
+  안 하고 안전하게 `error`를 반환한다.
+- **`gapgu_ocr_row_parser.py`** — 두 단계로 나뉜다:
+  1. `reconstruct_lines_from_clova_result()` — 클로바가 돌려주는 개별 텍스트 조각
+     (`inferText` + `boundingPoly.vertices`)을 y좌표로 그룹핑(스캔 기울어짐 허용
+     오차 있음) 후 x좌표로 정렬해 위→아래 순서의 텍스트 줄로 재조합한다. 순수 기하
+     계산이라 신뢰도 높음 — 실제 키 없이도 완전히 검증됨.
+  2. `split_line_into_row()` — 재조합된 한 줄을 rank/purpose/receipt/cause/detail
+     5개 컬럼으로 나눈다. ⚠️ 이 부분이 진짜 미검증 지점 — 실제 클로바 OCR 결과를 한 번도
+     못 봤고, 등기부 본문의 실제 줄바꿈/공백 패턴을 가정해서 짰다. 다만 최악의 경우
+     결과가 "판별 불가"(거짓 음성)로 떨어질 뿐, 시세·법정 금액 같은 "거짓 안심"류
+     위험은 없다 — `fraud_pattern_rules.py`가 이력 데이터 부재를 이미 명확히 구분해서
+     처리하기 때문.
+  구현 중 회귀 테스트로 실제 버그 하나를 잡았다: "말소" 기록("3번가압류등기말소")의
+  등기목적을 어휘 매칭으로 "가압류"만 뽑으면 "말소" 텍스트가 잘려나가
+  `registry_parser._CANCEL_REF_PATTERN`의 취소 판별이 깨졌다 — 말소 패턴을 어휘
+  매칭보다 먼저 확인하도록 수정.
+- **`debug_clova_ocr_call.py`** — 실제 Secret Key가 생기면 가장 먼저 돌려볼 스크립트.
+  실제 등기부 갑구 이미지를 넣으면 원본 응답, 재조합된 줄, 컬럼 분리 결과까지 한 번에
+  출력한다.
+- 실제 검증 순서(실키 확보 후): ① `debug_clova_ocr_call.py`로 원본 응답 구조 확인 →
+  ② `reconstruct_lines_from_clova_result()`의 `y_threshold` 값이 실제 해상도에
+  맞는지 확인 → ③ `split_line_into_row()`가 실제 갑구 레이아웃과 맞는지 확인, 안 맞으면
+  이 함수만 다시 짜면 됨(뒷단 `parse_gapgu()`는 안 건드려도 됨) → ④ `POST
+  /registry/upload`(또는 별도 엔드포인트)에 실제로 배선.
+- 백엔드 테스트 266→286개 전부 통과(클로바 어댑터 6개 + 행 파서 14개, 전부 모킹/합성
+  fixture 기반 — 실제 응답 검증 아님).
 
 ## `full_assessment.py` 인터페이스 계약 (오케스트레이터 완성, 2026-09-13)
 
@@ -562,7 +605,21 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       실제로 `docker compose up --build`까지 돌려서 최종 검증할 것.
 
 ---
-**최근 업데이트**: 2026-09-15 세션 추가분(3) — 최우선변제금(소액임차인 보호) 계산 부분
+**최근 업데이트**: 2026-09-15 세션 추가분(4) — 등기부 본문(갑구) 소유권 이전 이력 확보
+경로에 네이버 클로바 OCR 연동 설계+로직 착수(위 "네이버 클로바 OCR 연동 설계" 섹션
+참고). 핵심 발견: `registry_parser.py`의 `parse_gapgu()`/`parse_eulgu()`가 이미
+완성돼 있고 테스트 12개가 통과한 상태였다는 것 — 새로 만들 건 판별 로직이 아니라
+"스캔 이미지 → rank/purpose/receipt/cause/detail 딕셔너리"로 가는 앞단뿐이었다.
+`clova_ocr_adapter.py`(네트워크 호출, 키 없으면 안전한 no-op)와
+`gapgu_ocr_row_parser.py`(좌표 기반 줄 재조합은 순수 기하 계산이라 신뢰도 높음,
+5개 컬럼 분리는 실제 응답 못 본 채 만들어서 미검증)로 나눠 구현. 구현 중 회귀
+테스트로 실제 버그 하나 발견/수정: "말소" 기록의 등기목적을 어휘 매칭으로 축약하면
+"말소" 텍스트가 잘려나가 취소 판별 자체가 깨지는 문제. `debug_clova_ocr_call.py`를
+실키 검증용으로 준비해뒀지만 아직 Naver Cloud Platform 계정/키가 없어 실행은 못 함.
+백엔드 테스트 266→286개 전부 통과(전부 모킹/합성 fixture 기반).
+
+---
+**이전 업데이트**: 2026-09-15 세션 추가분(3) — 최우선변제금(소액임차인 보호) 계산 부분
 착수. 지금까지 "확인된 법정 테이블이 없어 의도적으로 보류"로 남겨뒀던 항목인데, 국가법령
 정보센터/법제처/부동산케이스노트 3개 독립 출처를 웹서치로 교차 확인해 현행(2023-02-21
 시행) 테이블만 우선 구현했다. 신규 모듈 `priority_region_classifier.py`(주소→지역등급

@@ -170,11 +170,21 @@ def extract_registry_rows_from_pdf(pdf_path: str) -> tuple[list[dict], list[dict
     ⚠️ 아직 실제 등기부등본 PDF로 검증되지 않은 부분이다.
     등기부등본 PDF는 표 형태로 되어 있어 pdfplumber의 extract_tables()로 뽑을 수 있을
     것으로 예상하지만, 실제 문서마다 셀 병합/줄바꿈 방식이 달라 컬럼 개수가 다르게
-    나올 가능성이 있다. 실제 PDF를 구하면 반드시 아래 순서로 먼저 확인할 것:
-      1. pdf.pages[i].extract_tables() 결과를 그대로 print해서 컬럼 구조 확인
+    나올 가능성이 있다. 게다가 본문 페이지가 스캔 이미지(텍스트 레이어 없음)라면
+    pdfplumber는 애초에 아무것도 못 뽑는다 — registry_summary_ocr.py가 요약 페이지에
+    Tesseract를 써야 했던 것과 같은 이유. 실제 PDF를 구하면 반드시 아래 순서로 먼저
+    확인할 것:
+      1. pdf.pages[i].extract_tables() 결과를 그대로 print해서 컬럼 구조 확인(텍스트
+         레이어가 아예 없으면 빈 결과가 나올 것 — 그러면 2번 경로로 갈아탈 것)
       2. 이 함수의 row_dict 매핑(rank/purpose/receipt/cause/detail)이 실제 컬럼 순서와
          맞는지 대조 후 수정
     핵심 판별 로직(parse_registry_rows)은 이 함수의 출력 형식만 맞으면 그대로 재사용 가능.
+
+    대안 경로 (2026-09-15 추가): 본문이 배경무늬 있는 스캔 이미지라 Tesseract/pdfplumber
+    둘 다 안 되면, gapgu_ocr_row_parser.extract_rows_from_clova_result()가 네이버
+    클로바 OCR(clova_ocr_adapter.py)로 같은 rank/purpose/receipt/cause/detail 형식을
+    만들어낸다 — 이쪽도 아직 실제 응답으로 검증 전이지만(각 모듈 docstring 참고),
+    parse_gapgu()/parse_eulgu() 자체는 두 경로 모두에서 그대로 재사용된다.
     """
     import pdfplumber  # noqa: 지연 임포트 — 실제 PDF 파싱을 쓸 때만 필요
 
