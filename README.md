@@ -445,6 +445,28 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
 
 ## 다음 단계 후보 (우선순위는 상황에 따라 조정)
 
+### 🎯 지금 최우선: 실제 Docker 빌드 + 국내 리전 실서버 배포/검증
+
+지금까지 로직·정적 검토·유닛테스트로 할 수 있는 건 다 했다. 남은 건 전부 "실제 환경이
+있어야만" 확인 가능한 것들이라, 다음 세션은 이 하나의 흐름으로 묶어서 진행할 것:
+
+1. **Docker 설치된 환경 확보** (이 개발 머신엔 Docker 자체가 없음 — 클라우드 인스턴스든
+   다른 로컬 머신이든 Docker가 도는 곳 필요).
+2. **`docker compose up --build` 최초 실행** — 아래 "Docker 배포 스캐폴딩" 섹션에서
+   정적 검토로 잡아둔 버그(VWorld env 누락, SQLite 경로 고정)가 실제로 의도대로
+   동작하는지 확인. 특히:
+   - 컨테이너 안에서 `/app/data/assessments.db`가 실제로 생성되는지, `docker compose
+     down && up`을 반복해도 이전 `/result/:id` 결과가 살아있는지 확인.
+   - `tesseract`/`poppler`가 apt-get 설치만으로 `POST /registry/upload`에서 실제로
+     동작하는지 확인 (Windows 포터블 설치와 다른 경로라 처음 겪는 조합).
+3. **국내 리전 서버 준비** (배포 타깃 미정 — 클라우드사/리전 먼저 정할 것, 예:
+   AWS `ap-northeast-2`). 국내 IP가 확보되면 위 "VWorld 배포 서버 검증 체크리스트"
+   섹션 순서대로 `debug_vworld_call.py` → 엔드투엔드 폴백 검증까지 진행.
+4. 위 1~3이 끝나야 이 프로젝트가 "로컬에서만 검증된 상태"를 벗어난다 — 그 전까지는
+   VWorld/Docker 관련 모든 항목이 잠정적으로 미완성 상태로 취급할 것.
+
+---
+
 - [x] `full_assessment.py` 오케스트레이터 작성
 - [x] FastAPI 레이어 씌우기 (`api.py`, `POST /assessment` + `GET /health`)
 - [x] `POST /registry/upload` 분리 엔드포인트 작성 (PDF 업로드 → OCR 미리보기 전용)
@@ -514,14 +536,30 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       깨지던 문제 해결. `docker-compose.yml`에 `./data:/app/data` 볼륨 마운트 추가로
       영속성 확보, `.gitignore`에 `data/`/`*.db` 추가. Redis는 여러 워커/여러 서버로
       스케일할 때 옮길 다음 단계로 남겨둠(지금은 단일 워커 프로토타입이라 별도 서비스
-      운영 부담이 이득보다 큼). ⚠️ 이 머신엔 Docker가 없어 실제 빌드/컨테이너 재시작
-      시나리오 자체는 여전히 미검증 — 정적 코드 검토 + SQLite 유닛테스트로만 확인함.
-      (villa/officetel 연동 포함) 백엔드 테스트 204→227개 전부 통과.
+      운영 부담이 이득보다 큼). (3) `assessment_store.py`의 DB 경로 기본값(상대경로
+      "data/assessments.db")이 볼륨 마운트 지점과 실제로는 `Dockerfile`의 `WORKDIR`에
+      우연히 의존해서 맞아떨어지는 상태였음을 재검토로 발견 — `docker-compose.yml`에
+      `ASSESSMENT_DB_PATH=/app/data/assessments.db`를 명시해 그 암묵적 결합을 없앰
+      (커밋 `6afb4f2`). ⚠️ 이 머신엔 Docker가 없어 실제 빌드/컨테이너 재시작 시나리오
+      자체는 여전히 미검증 — 정적 코드 검토 + SQLite 유닛테스트로만 확인함. 위 "🎯 지금
+      최우선" 항목 참고. (villa/officetel 연동 포함) 백엔드 테스트 204→227개 전부 통과.
 - [ ] 실제 서버/클라우드에 배포 (배포 타깃 미정) — 배포 시 위 Docker 볼륨/env 변경사항을
       실제로 `docker compose up --build`까지 돌려서 최종 검증할 것.
 
 ---
-**최근 업데이트**: 2026-09-15 세션 — 세 갈래 작업. ① Docker 배포 정적 검토 중
+**최근 업데이트**: 2026-09-15 세션 추가분 (커밋 `6afb4f2`) — SQLite DB 경로를
+`docker-compose.yml`에서 `ASSESSMENT_DB_PATH=/app/data/assessments.db`로 명시 고정.
+직전 커밋에서 볼륨(`./data:/app/data`)은 추가했지만 `assessment_store.py`의 기본
+경로(상대경로 "data/assessments.db")는 `Dockerfile`의 `WORKDIR /app`과 우연히
+맞아떨어지는 암묵적 의존 상태였다 — 나중에 WORKDIR나 실행 방식(예: gunicorn)이
+바뀌면 조용히 볼륨 밖에 DB가 생겨 재배포마다 데이터가 사라지는 버그가 재발할 수 있는
+구조였음. 환경변수로 명시해 그 암묵적 결합을 제거함. 코드 변경 없이 설정 파일 한 줄이라
+테스트 개수 변화는 없음(204→227 유지). "다음 단계"를 "실제 Docker 빌드 + 국내 리전
+실서버 배포/검증" 하나의 흐름으로 재정리(아래 "🎯 지금 최우선" 참고) — 지금부터는 로직
+추가보다 실제 환경 확보가 막고 있는 항목들을 뚫는 게 우선.
+
+---
+**이전 업데이트**: 2026-09-15 세션 — 세 갈래 작업. ① Docker 배포 정적 검토 중
 `docker-compose.yml`에 `VWORLD_API_KEY`/`VWORLD_DOMAIN`이 아예 안 넘어가던 버그(로컬
 검증된 VWorld 연동이 Docker 배포에서는 조용히 항상 꺼져있었을 것) 발견/수정, `POST
 /assessment` 저장소를 인메모리 dict에서 SQLite(`assessment_store.py`, 신규 의존성 없음)
