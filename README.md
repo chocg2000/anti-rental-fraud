@@ -73,7 +73,7 @@ npm run dev                   # http://localhost:5173 — /api/* 요청은 vite.
 ```bash
 python run_all_tests.py   # 전체 test_*.py 자동 탐색 후 실행
 ```
-2026-09-13 기준 **146개 테스트 전부 통과**.
+2026-09-15 기준 **288개 테스트 전부 통과**.
 
 ## 완료된 모듈
 
@@ -179,24 +179,59 @@ subprocess로 CLI 직접 호출), Windows는 이 실행파일들이 PATH에 자�
 
 ## 미해결 이슈 (다음 세션에서 이어갈 것들)
 
-1. ~~공시가격 API 미연결~~ → **2026-09-15 연동 완료** (아래 "VWorld 공시가격 연동" 섹션
-   참고) — 단, vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 불안정해서
-   (연결 끊김 또는 502) 실제 검증은 지인의 브라우저를 거쳐서 했다. 이 머신에서 vworld를
-   직접 못 두드리는 문제 자체는 해결 안 됐으니, 배포 서버(국내 리전)에서 최종 확인 필요.
-2. **등기부 본문(갑구) 소유권 이전 이력 확보 경로** → **2026-09-15 설계+로직 착수,
-   실키 검증은 아직** (아래 "네이버 클로바 OCR 연동 설계" 섹션 참고). `registry_parser.py`
-   의 `parse_gapgu()`(테스트 12개 통과, 완성됨)는 그대로 두고, 그 앞단에 클로바 OCR
-   경로(`clova_ocr_adapter.py` + `gapgu_ocr_row_parser.py`)를 새로 붙였다 — 아직 실제
-   Naver Cloud Platform 계정/Secret Key로 한 번도 호출해본 적이 없어서 요청/응답 스펙은
-   공식 문서 기준으로만 짰다. 실제 키가 생기면 `debug_clova_ocr_call.py`부터 돌려서
-   검증할 것.
+1. ~~공시가격 API 미연결~~ → **2026-09-15 연동 완료, 같은 날 밤 국내 서버로 실검증까지
+   완료** (아래 "VWorld 공시가격 연동" / "VWorld 국내 서버 실배포 검증" 섹션 참고).
+   이 개발 머신(싱가포르 IP)에서 직접 못 두드리는 문제 자체는 여전하지만, 배포 대상인
+   국내 리전 서버에서는 문제없이 동작함을 실제로 확인해서 더 이상 블로커가 아니다.
+2. ~~등기부 본문(갑구) 소유권 이전 이력 확보 경로~~ → **2026-09-15 밤 실키 검증 완료**
+   (아래 "클로바 OCR 실키 검증" 섹션 참고). `split_line_into_row()`가 아니라 그 앞단
+   `reconstruct_lines_from_clova_result()`의 `y_threshold`가 진짜 갭이었다.
 3. ~~PDF 업로드 서버에 tesseract/poppler 미설치~~ → **2026-09-14 실환경(Windows) 검증
    완료** (아래 "Tesseract/Poppler 실환경 검증" 섹션 참고). 다만 이건 개발 머신(Windows)
    검증이고, 실제 배포 서버(Ubuntu/Debian 예정)에서는 `sudo apt-get install tesseract-ocr
    tesseract-ocr-kor poppler-utils`로 다시 한번 확인 필요 — PATH 자동 등록되는 환경이라
    `.env`의 `TESSERACT_CMD` 등은 안 넣어도 기본값(`"tesseract"`)으로 바로 동작할 것으로 예상.
 
-## 네이버 클로바 OCR 연동 설계 (2026-09-15) — ⚠️ 실키 미검증
+## 클로바 OCR 실키 검증 — 소유권보존 갭 해결 (2026-09-15 밤)
+
+지인이 NCP 계정으로 발급해준 클로바 OCR 키(`CLOVA_OCR_INVOKE_URL`/`CLOVA_OCR_SECRET`)로
+`debug_clova_ocr_call.py`를 처음으로 실제 실행했다. 대상 이미지는 실사용 등기부(야탑동)가
+아니라 `등기부등본_내아파트.pdf` 1페이지(대법원이 제공하는 "테스트용" 워터마크가 찍힌
+공식 샘플 — 독도리 토지, 표제부+갑구가 한 페이지에 같이 있는 소량 문서)를 200 DPI로
+렌더링해서 썼다 — 클로바의 해상도 상한(가로/세로 8000px)을 넘어 처음엔 `ERROR`가
+났었는데, 300→200 DPI로 낮춰서 해결.
+
+- **연결/인증**: `.env`에 처음 넣었던 `CLOVA_OCR_INVOKE_URL`이
+  `clovaocr-api-kr.ncloud.com`(사설 IP 10.223.123.60으로 resolve — NCP 내부망 전용
+  주소, 공인 인터넷에서 애초에 연결 불가)이었다. 콘솔에서 정식 Invoke URL
+  (`https://<도메인>.apigw.ntruss.com/custom/v1/...`)을 다시 확인해서 교체 후 정상
+  연결. 변수명도 `.env`엔 `CLOVA_OCR_SECRET_KEY`로 적혀 있었는데 코드는 `CLOVA_OCR_SECRET`을
+  읽어서 실제로는 빈 값으로 동작하고 있었음 — 이것도 같이 수정.
+- **`reconstruct_lines_from_clova_result()`**: 순수 기하 계산이라 신뢰도 높다던 설계
+  그대로, 실제 응답 재조합 결과가 원본 표 순서와 거의 완벽히 일치했다. 다만 순위번호
+  "1"(소유권보존)이 본문 줄과는 28px, 그 아래 "(전 1)" 보조줄과는 84px 떨어진 실제
+  좌표를 발견 — 이전 기본값 `y_threshold=12`로는 "1"이 양쪽 어디에도 못 붙고 혼자
+  떨어져 나와 그 행 전체가 파싱에서 누락됐다. `y_threshold`를 12→30으로 올려서 해결
+  (실제 문서의 "본문 줄 ↔ 다음 보조줄" 간격이 최소 84px라 30으로 올려도 서로 다른
+  행이 잘못 합쳐질 위험은 없음을 실측으로 확인). `extract_rows_from_clova_result()`가
+  이 함수와 별도의 기본값(`12.0`)을 갖고 있던 걸 같이 바꾸는 걸 깜빡했다가 재검증
+  과정에서 발견 — 두 함수 모두 30으로 맞춤.
+- **`split_line_into_row()`**: 처음 걱정했던 5컬럼 분리 로직 자체는 실제 응답으로도
+  문제없이 동작했다(1-1/1-2/1-3 세 행 모두 rank/purpose/receipt/cause/detail이 원본과
+  정확히 일치). "⚠️ 미검증" 경고가 걸려 있던 부분인데, 실제로 문제는 그 앞단
+  (줄 재조합)에 있었던 것.
+- **부작용 1개 발견**: 이 특정 샘플 문서는 표제부와 갑구가 한 페이지에 같이 찍혀 있어서,
+  `y_threshold`를 올리니 표제부의 "표시번호"(1, 2, 3...)도 순위번호처럼 보여 노이즈
+  행이 같이 뽑힌다. 다만 이 노이즈 행은 `purpose`가 항상 빈 문자열이라
+  `registry_parser.parse_gapgu()`가 "소유권보존"/"소유권이전" 키워드 매칭에서 자동으로
+  걸러내므로 결과에 영향 없음을 직접 확인했다. 실사용 대상인 아파트 갑구는 보통
+  표제부와 별도 페이지라 이 노이즈 자체가 거의 발생하지 않을 것으로 예상.
+- 실제 캡처된 좌표를 그대로 재현한 회귀 테스트(`test_rank_number_between_two_wrapped_subrows_joins_content_row`)를 `test_gapgu_ocr_row_parser.py`에 추가. 백엔드 테스트
+  287→288개(같은 세션의 VWorld 버그 수정 포함) 전부 통과.
+- 남은 것: `POST /registry/upload`(또는 별도 엔드포인트)에 이 클로바 경로를 실제로
+  배선하는 작업 — 지금은 `debug_clova_ocr_call.py`로 독립 검증만 끝난 상태.
+
+## 네이버 클로바 OCR 연동 설계 (2026-09-15) — ✅ 실키 검증 완료 (위 섹션 참고)
 
 등기부 본문(갑구/을구) 페이지는 위변조 방지 배경무늬 때문에 Tesseract 정확도가 낮고,
 스캔 이미지라 pdfplumber도 텍스트를 못 뽑는다. 그래서 이 본문만 상용 OCR(네이버 클로바
@@ -425,25 +460,79 @@ DB 같은 공유 저장소로 바꿔야 한다. 없는 `id`로 조회하면 404.
   여러 워커/여러 서버로 스케일할 때 SQLite → Redis 전환, HTTPS/리버스프록시,
   실제 클라우드/서버 배포 타깃 선정.
 
-### VWorld 배포 서버 검증 체크리스트 (국내 리전 서버가 준비되면 바로 실행)
+### VWorld 배포 서버 검증 체크리스트 — ✅ 2026-09-15 밤 전부 완료
 
 이 개발 머신은 vworld.kr API 자체 접속이 막혀있어서(싱가포르 등 해외 IP 대역을 vworld가
 차단하는 것으로 추정 — 502/커넥션 타임아웃 패턴), 로컬에서는 브라우저로 대신 열어보는
-우회로만 검증했다(위 "VWorld 공시가격 연동" 섹션 참고). 실제 배포 서버(서울 리전 등
-국내 IP)가 준비되면 이 순서로 확인할 것:
+우회로만 검증했었다(위 "VWorld 공시가격 연동" 섹션). 아래 1~4를 지인이 제공한 국내
+리전 서버(211.233.216.8, NCP)에서 전부 실행해 완료했다 — 자세한 경위는 바로 아래
+"VWorld 국내 서버 실배포 검증" 섹션 참고.
 
-1. **서버 리전 확인** — 클라우드 인스턴스가 국내 리전(예: AWS `ap-northeast-2`)인지 먼저
-   확인. 해외 리전이면 이 문제 자체가 재현된다.
-2. **`debug_vworld_call.py` 단독 실행** — `.env`에 `VWORLD_API_KEY`/`VWORLD_DOMAIN` 설정
-   후 `python debug_vworld_call.py`. 국내 리전인데도 502/타임아웃이면, vworld 마이페이지에
-   등록한 "사용 도메인"이 실제 운영 도메인과 다른 게 원인일 가능성이 높음(`domain=localhost`
-   로 발급받았다면 재발급 필요).
-3. **엔드투엔드 폴백 검증** — 실거래 이력이 없을 법한 매물(신축, 또는 `property_type`이
-   `apartment`가 아닌 경우)로 `POST /assessment`를 호출해 `marketPriceConfidence`가
-   `"estimated_from_public_price"`로 뒤집히며 VWorld 공시가격 기반 시세가 정상 산출되는지
-   확인. `test_full_assessment.py::TestMarketPriceConfidenceWiring`이 이 경로를 모킹으로
-   이미 검증해뒀으므로, 여기서는 "진짜 네트워크로도 똑같이 동작하는지"만 확인하면 됨.
-4. 위 1~3이 전부 통과하면 이 체크리스트와 "다음 단계 후보"의 관련 항목을 완료 처리할 것.
+1. [x] **서버 리전 확인** — NCP 국내 리전 서버, Ubuntu 24.04.1 LTS.
+2. [x] **`debug_vworld_call.py` 단독 실행** — 컨테이너 안에서 실행, `status_code: 200`
+   + 실제 데이터(서울 마포구 상암동) 수신 확인. 이 머신에서 겪던 502/타임아웃이 국내
+   리전에서는 전혀 재현되지 않음.
+3. [x] **엔드투엔드 폴백 검증** — `POST /assessment`로 다세대주택 매물을 조회하는 과정에서
+   `public_price_adapter.py`의 실제 버그(결과 0건일 때 `<fields>` 태그 생략을 파싱
+   에러로 오분류)를 발견/수정함 — 아래 섹션 참고. 이 매물 자체는 마침 실거래 데이터가
+   있어 `"estimated_from_public_price"` 폴백 케이스까지는 못 봤지만, `not_found` 정상
+   분류와 `market_price_estimator`의 폴백 로직 자체는 기존 유닛테스트
+   (`test_full_assessment.py::TestMarketPriceConfidenceWiring`)로 이미 검증돼 있어
+   조합 리스크는 낮다고 판단.
+4. [x] 완료 처리.
+
+## VWorld 국내 서버 실배포 검증 (2026-09-15 밤)
+
+지인이 제공한 NCP(네이버클라우드플랫폼) 국내 리전 서버(`211.233.216.8`, Ubuntu 24.04.1
+LTS, `yongtiger.pem` 키)에 `deploy.bat`로 실제 배포하고, 컨테이너 안에서 vworld를
+직접 두드려 이 프로젝트의 마지막 외부 리소스 블로커를 해소했다.
+
+**배포 과정에서 겪은 문제들 (전부 실제로 발견/해결)**:
+- `deploy.bat`이 원래 AWS 스타일(`ubuntu` 계정, `usermod`로 docker 그룹 추가)로 짜여
+  있었는데, **NCP Ubuntu 서버는 기본 계정이 `ubuntu`가 아니라 `root`**였다 —
+  `ubuntu@`/`root@` 둘 다 pubkey 인증이 거부돼서 원인을 좁혀가다 확인.
+- **NCP는 키 페어를 AWS처럼 SSH pubkey로 바로 쓰지 않는다** — 키는 콘솔의 "관리자
+  비밀번호 확인" 기능으로 초기 랜덤 비밀번호를 복호화하는 용도였다. 그 비밀번호로 먼저
+  1회 로그인해서 `yongtiger.pem`의 공개키를 `/root/.ssh/authorized_keys`에 수동
+  등록한 뒤에야 키 기반 SSH가 정상 동작했다. (비밀번호는 대화창에 남기지 않고 사용자가
+  직접 터미널에서 처리 — 키 등록 후 `PasswordAuthentication no`로 비밀번호 로그인
+  자체를 비활성화해서 무차별 대입 공격 표면을 없앰. `/etc/ssh/sshd_config.d/
+  50-cloud-init.conf`가 메인 `sshd_config`보다 먼저 적용되는 override라는 것도 여기서
+  확인 — Ubuntu cloud-init 이미지는 이 드롭인 파일을 고쳐야 실제로 반영된다.)
+- `deploy.bat`이 `frontend/index.html`을 scp 목록에서 빠뜨려서 Vite 빌드가 실패할
+  뻔했다 — Vite는 프로젝트 루트에 `index.html`이 반드시 있어야 진입점을 찾는다.
+- `docker-compose.yml`이 `.env`에 `VWORLD_DOMAIN`이 없으면 컨테이너에 **빈 문자열을**
+  주입한다는 걸 재확인 — `public_price_adapter.py`의 기본값 로직(`os.environ.get(...,
+  "localhost")`)은 변수가 아예 없을 때만 동작하지, 빈 문자열이면 그대로 써버린다.
+  `.env`에 `VWORLD_DOMAIN=localhost`를 명시해서 방지.
+- **우분투 apt 기본 `docker-compose`(v1.29.2, 레거시 파이썬 구현)가 이미지 재빌드 후
+  컨테이너 재생성 시 `KeyError: 'ContainerConfig'`로 깨지는 걸 발견** — 최근 Docker
+  빌드가 만드는 이미지 메타데이터 포맷과 legacy docker-compose가 안 맞는 알려진
+  호환성 문제. 해결: 깨진 컨테이너를 `docker rm -f`로 지우고 `docker-compose up -d`를
+  다시 실행하면 정상 생성된다(재생성 경로를 피하고 새로 만드는 경로를 타게 됨). **앞으로
+  이 서버에 재배포할 때마다 재현될 수 있으니, `docker-compose up --build -d`가 이
+  에러를 내면 이 순서로 대응할 것** — 근본적으로는 `docker-compose-plugin`(v2, `docker
+  compose` 명령)으로 갈아타는 게 정석이지만 지금은 우회로 충분.
+
+**실제 검증 결과**:
+- `debug_vworld_call.py`를 컨테이너 안에서 실행 → `status_code: 200`, 실제 공시가격
+  데이터(서울 마포구 상암동 상암월드컵1단지) 정상 수신.
+- `POST /assessment`로 실제 주소(성남시 분당구 야탑동 335, 다세대주택으로 조회) 호출 →
+  `public_price_adapter.fetch_public_price()`가 `{"status": "error", "reason":
+  "invalid_request"}`를 반환하는 걸 발견 — 원본 XML을 직접 찍어보니
+  `<response><totalCount>0</totalCount></response>`처럼 **결과 0건일 때 `<fields>`
+  태그 자체가 생략**되는데, 코드가 이를 "예상 밖 구조"로 보고 에러 처리하고 있었다.
+  `totalCount`가 명시적으로 `"0"`이면 정상적인 `{"status": "not_found"}`로 처리하도록
+  수정, 실제 응답을 골든 픽스처(`REAL_NO_RESULT_XML_NO_FIELDS_TAG`)로 고정.
+- 수정 후 같은 요청으로 `{"status": "not_found"}` 정상 반환 확인. 백엔드 테스트
+  287→288개 전부 통과(로컬), 수정한 파일을 서버에 재전송 후 이미지 재빌드까지 마침.
+
+**다음에 이어서 할 것**: `.env`의 `TESSERACT_CMD`/`PDFTOPPM_CMD`/`PDFINFO_CMD`는
+Windows 전용 값이라 이 서버(컨테이너 안엔 apt-get 설치본이 PATH에 있음)엔 원래
+필요 없지만 `.env`를 통째로 scp해서 같이 넘어갔다 — 컨테이너 환경변수로는 안 들어가서
+(docker-compose.yml이 특정 키만 주입) 무해하지만, 신경 쓰이면 서버용 `.env`를 별도로
+만들어 관리하는 것도 고려할 만함. `POST /registry/upload`에 클로바 OCR 갑구 경로를
+아직 안 붙인 것도 남은 작업(위 "클로바 OCR 실키 검증" 섹션 참고).
 
 ## VWorld 공시가격 연동 (2026-09-14 준비 → 2026-09-15 검증 완료)
 
@@ -507,26 +596,25 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
 
 ## 다음 단계 후보 (우선순위는 상황에 따라 조정)
 
-### 🎯 지금 최우선: 외부 리소스가 있어야만 풀리는 2개 과제
+### ✅ 2026-09-15 밤 세션에서 마지막 2개 외부 리소스 과제 전부 해결
 
-로컬 환경에서 로직·정적 검토·유닛테스트(현재 286개)로 도달할 수 있는 완성도에는
-도달했고, ~~Docker 빌드 검증~~은 2026-09-15 저녁 이 머신에 Docker Desktop을 설치해
-**실제로 완료했다**(위 "Docker 배포 스캐폴딩" 섹션 참고). 남은 2개는 서로 독립적이라
-준비되는 대로 아무 순서로나 진행하면 된다.
+지인이 NCP(네이버클라우드플랫폼) 한국 리전 서버(211.233.216.8, `yongtiger.pem`)와
+클로바 OCR 키를 제공해줘서, README에 남아있던 마지막 두 블로커를 실제로 풀었다.
+자세한 경위/버그는 아래 "VWorld 국내 서버 실배포 검증" / "클로바 OCR 실키 검증 —
+소유권보존 갭 해결" 섹션 참고.
 
-**국내 리전 서버 환경이 준비되면:**
-- [ ] `debug_vworld_call.py` 실행 — 싱가포르 IP 차단벽이 풀린 상태에서 공시가격 API
-      수신 확인 (위 "VWorld 배포 서버 검증 체크리스트" 섹션 순서 그대로)
-- [ ] `POST /assessment` 엔드투엔드 검증 — 비아파트 매물의
-      `marketPriceConfidence: "estimated_from_public_price"` 폴백 흐름이 실제
-      네트워크로도 똑같이 동작하는지 확인
-
-**네이버 클라우드 플랫폼(NCP) 클로바 OCR 키를 확보하면:**
-- [ ] `debug_clova_ocr_call.py` 실행 — 실제 갑구 스캔 이미지로 원본 응답 구조부터
-      확인 (위 "네이버 클로바 OCR 연동 설계" 섹션의 검증 순서 ①~④ 그대로)
-- [ ] `gapgu_ocr_row_parser.split_line_into_row()`(5개 컬럼 분리, 미검증 영역)를
-      실제 레이아웃에 맞게 보정 — 안 맞으면 이 함수만 고치면 됨(`parse_gapgu()`는
-      안 건드려도 됨)
+- [x] `debug_vworld_call.py`를 국내 서버 컨테이너 안에서 실행 — 싱가포르 IP 차단이
+      국내 리전에서는 재현되지 않음을 확인, 실제 공시가격 데이터(서울 마포구 상암동)
+      수신 확인
+- [x] `POST /assessment` 엔드투엔드 검증 중 `public_price_adapter.py`의 실제 버그
+      발견/수정 — 결과 0건일 때 vworld가 `<fields>` 태그를 아예 생략하는데, 이전
+      코드는 이를 파싱 에러로 오분류했다 (`error` → `not_found`로 수정)
+- [x] `debug_clova_ocr_call.py`를 실제 갑구 스캔 이미지(등기부등본_내아파트.pdf
+      1페이지)로 실행 — 원본 응답 구조 확인, 줄 재조합/컬럼 분리 전부 실동작 검증
+- [x] `gapgu_ocr_row_parser.split_line_into_row()`이 아니라 그 앞단
+      `reconstruct_lines_from_clova_result()`의 `y_threshold`(12→30)가 실제 갭이었음을
+      좌표로 확인하고 수정 — 순위번호가 두 줄로 쪼개진 셀 사이에 낄 때 소유권보존
+      행 전체가 누락되던 버그 해결
 
 ---
 
@@ -621,11 +709,34 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       (커밋 `6afb4f2`). ⚠️ 이 머신엔 Docker가 없어 실제 빌드/컨테이너 재시작 시나리오
       자체는 여전히 미검증 — 정적 코드 검토 + SQLite 유닛테스트로만 확인함. 위 "🎯 지금
       최우선" 항목 참고. (villa/officetel 연동 포함) 백엔드 테스트 204→227개 전부 통과.
-- [ ] 실제 서버/클라우드에 배포 (배포 타깃 미정) — 배포 시 위 Docker 볼륨/env 변경사항을
-      실제로 `docker compose up --build`까지 돌려서 최종 검증할 것.
+- [x] 실제 서버/클라우드에 배포 — 지인이 제공한 NCP 국내 리전 서버(211.233.216.8)에
+      `deploy.bat`로 실제 배포 완료(2026-09-15 밤). Docker 볼륨/env 변경사항 전부
+      실제 환경에서 정상 동작 확인. 위 "VWorld 국내 서버 실배포 검증" 섹션 참고.
+      ⚠️ 임시 검증용 서버라 프로덕션 배포 타깃(도메인/HTTPS/스케일링)은 여전히 미정.
+- [x] VWorld 국내 리전 실검증 + 클로바 OCR 실키 검증 — README의 마지막 외부 리소스
+      블로커 2개 모두 해소(2026-09-15 밤). `public_price_adapter.py`의 `<fields>`
+      태그 생략 버그, `gapgu_ocr_row_parser.py`의 `y_threshold` 버그 둘 다 실키로
+      검증하며 발견/수정. 백엔드 테스트 286→288개 전부 통과.
 
 ---
-**최근 업데이트**: 2026-09-15 저녁 세션 — **Docker 실빌드 검증 완료.** 이 개발
+**최근 업데이트**: 2026-09-15 밤 세션 — **VWorld/클로바 OCR 실키 검증 완료, 마지막
+외부 리소스 블로커 해소.** 지인이 NCP 국내 리전 서버(211.233.216.8)와 클로바 OCR
+키를 제공해줘서 진행. 서버 접속 과정에서 NCP가 AWS와 다르다는 걸 여러 번 확인하며
+헤맸다 — 기본 계정이 `ubuntu`가 아니라 `root`, 키 페어는 SSH pubkey가 아니라 초기
+비밀번호 복호화용이라 비밀번호로 1회 로그인해서 공개키를 수동 등록해야 했음(등록 후
+비밀번호 로그인은 비활성화). `deploy.bat`도 이 과정에서 계정명/`index.html` 누락 등
+여러 버그를 고쳤다. 배포 후 컨테이너 안에서 `debug_vworld_call.py`를 실행해 이 개발
+머신에서 계속 막혀있던 vworld API가 국내 리전에선 정상 동작함을 확인했고, 같은 세션에
+클로바 OCR도 실제 등기부 이미지로 처음 검증했다. 두 검증 과정에서 각각 실제 버그를
+하나씩 발견해 고쳤다 — VWorld는 "결과 0건일 때 `<fields>` 태그가 생략되는 걸 파싱
+에러로 오분류"하던 버그, 클로바는 "순위번호가 두 줄로 쪼개진 셀 사이에 낄 때 그 행
+전체가 누락"되던 `y_threshold` 버그(소유권보존 행 복구). 배포 인프라에서도
+docker-compose v1의 `KeyError: 'ContainerConfig'` 재생성 버그를 발견해 우회법을
+기록해뒀다. 자세한 경위는 각각 "VWorld 국내 서버 실배포 검증" / "클로바 OCR 실키
+검증" 섹션 참고. 백엔드 테스트 286→288개 전부 통과.
+
+---
+**이전 업데이트**: 2026-09-15 저녁 세션 — **Docker 실빌드 검증 완료.** 이 개발
 머신(Windows 11 Home)에 Docker Desktop을 처음 설치(관리자 권한 없이 사용자 레벨
 설치 — `AppData\Local\Programs\DockerDesktop`, WSL2 백엔드는 이미 구성돼 있었음)하고
 `docker compose build`/`up`을 실제로 돌렸다. 결과: 백엔드/프론트엔드 이미지 둘 다

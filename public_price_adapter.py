@@ -86,6 +86,14 @@ def _parse_response(xml_text: str) -> int | None:
 
     fields_el = root.find("fields")
     if fields_el is None:
+        # 2026-09-15 배포 서버(국내 리전)에서 실제로 확인: totalCount=0(조회 결과 없음)일
+        # 때 vworld는 <fields></fields>를 빈 채로 보내는 게 아니라 태그 자체를 아예 뺀다
+        # (다세대주택처럼 이 API(아파트 전용) 대상이 아닌 PNU로 조회하면 이 케이스가 뜬다).
+        # totalCount가 "0"으로 명시돼 있으면 정상적인 "결과 없음"이지, 파싱 실패가 아니다 —
+        # totalCount 자체가 없거나 0이 아니면 진짜 예상 밖 구조이므로 그대로 에러 처리한다.
+        total_count_el = root.find("totalCount")
+        if total_count_el is not None and (total_count_el.text or "").strip() == "0":
+            return None
         raise PublicPriceApiError(f"예상한 응답 구조가 아닙니다 — 원본을 직접 확인하세요: {xml_text[:1000]}")
 
     field_els = fields_el.findall("field")

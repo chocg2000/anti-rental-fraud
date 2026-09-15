@@ -41,14 +41,30 @@ _DATE_PATTERN = re.compile(r'\d{4}년\s*\d{1,2}월\s*\d{1,2}일')
 _RECEIPT_NO_PATTERN = re.compile(r'제\s*\d+\s*호')
 
 
-def reconstruct_lines_from_clova_result(clova_response: dict, y_threshold: float = 12.0) -> list[str]:
+def reconstruct_lines_from_clova_result(clova_response: dict, y_threshold: float = 30.0) -> list[str]:
     """
     클로바 General OCR(V2) 응답의 images[0].fields를 좌표 기준으로 재조합해서
     위→아래, 왼쪽→오른쪽 순서의 텍스트 줄 리스트로 만든다.
 
     같은 "행"으로 볼 조각들은 상단 y좌표 차이가 y_threshold 이내인 것들이다 — 스캔이
     약간 기울어져도 흡수하기 위한 여유값. 행 안에서는 x좌표 오름차순으로 정렬해
-    공백으로 이어붙인다.
+    공백으로 이어붙인다. 주의: 그룹의 기준(anchor)은 그 행에서 가장 먼저(가장 작은 y로)
+    들어온 조각 하나이지, 행 전체의 평균이나 가장 가까운 조각이 아니다 — 그래서 필요한
+    임계값은 "행 내 최대 y폭"만큼 커야 한다(아래 참고).
+
+    y_threshold=30.0(2026-09-15, 실제 클로바 OCR 응답으로 검증하며 12.0→30.0으로 조정):
+    순위번호 칸이 "1" + "(전 1)"처럼 두 줄로 쪼개진 행에서, 순위번호 숫자 자체의
+    y좌표가 그 행 anchor(등기목적/접수 등 본문 조각 중 가장 위쪽 y)와는 28px, 그 아래
+    "(전 N)" 보조줄과는 84px 떨어져 있는 실제 사례를 발견했다(200 DPI 스캔 기준).
+    12px 임계값으로는 순위번호가 양쪽 어디에도 못 붙고 혼자 떨어져 나와 그 행 전체가
+    파싱에서 누락됐다. 실제 문서의 "본문 줄 anchor ↔ 다음 보조줄" 간격은 최소 84px라
+    30px로 올려도 서로 다른 행이 잘못 합쳐질 위험은 없다.
+    ⚠️ 부작용: 표제부(토지의 표시)처럼 갑구/을구와 무관한 표가 같은 이미지에 같이
+    찍혀 있으면, 그 표의 "표시번호"(1, 2, 3...) 칸도 순위번호처럼 보여 노이즈 행이
+    같이 뽑힌다 — 다만 이 노이즈 행은 purpose가 항상 빈 문자열이라
+    registry_parser.parse_gapgu()가 "소유권보존"/"소유권이전" 키워드 매칭에서 자동으로
+    걸러내므로 결과에 영향은 없다(직접 확인함). 실사용 대상인 아파트 갑구는 보통
+    표제부와 별도 페이지라 이 노이즈 자체가 거의 발생하지 않을 것으로 예상.
 
     Args:
         clova_response: fetch_ocr_result()가 돌려준 {"status": "ok", "data": ...}의
@@ -179,7 +195,7 @@ def split_line_into_row(line: str) -> dict | None:
     }
 
 
-def extract_rows_from_clova_result(clova_response: dict, y_threshold: float = 12.0) -> list[dict]:
+def extract_rows_from_clova_result(clova_response: dict, y_threshold: float = 30.0) -> list[dict]:
     """
     reconstruct_lines_from_clova_result() + split_line_into_row()를 이어붙인 편의 함수.
     데이터 행으로 인식되지 않은 줄(섹션 제목 등)은 조용히 걸러진다.

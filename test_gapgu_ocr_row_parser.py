@@ -67,7 +67,7 @@ class TestReconstructLines(unittest.TestCase):
             "images": [{
                 "fields": [
                     field("1", 10, 100),
-                    field("2", 10, 130),  # 30px 차이 — 기본 임계값(12px) 초과
+                    field("2", 10, 190),  # 90px 차이 — 기본 임계값(30px) 초과
                 ]
             }]
         }
@@ -79,6 +79,31 @@ class TestReconstructLines(unittest.TestCase):
 
     def test_missing_images_key_returns_empty_list(self):
         self.assertEqual(reconstruct_lines_from_clova_result({}), [])
+
+    def test_rank_number_between_two_wrapped_subrows_joins_content_row(self):
+        # 2026-09-15 실제 클로바 OCR 응답(등기부등본_내아파트.pdf 1페이지, 200 DPI)으로
+        # 발견한 실제 간격을 그대로 재현한다: 그룹 anchor(행에서 가장 작은 y, 여기선
+        # "1968년3월13일"의 3763)와 순위번호 "1"(3791)의 y차는 28px, 그 아래 "(전 1)"
+        # 보조줄(3875)과는 84px 떨어져 있다 — 이전 임계값(12px)으로는 "1"이 어느 쪽에도
+        # 못 붙고 혼자 떨어져 나와 소유권보존 행 전체가 파싱에서 누락됐었다.
+        clova_data = {
+            "images": [{
+                "fields": [
+                    field("1968년3월13일", 1537, 3763),  # 이 행의 anchor(가장 작은 y)
+                    field("소유자", 2934, 3763),
+                    field("소유권보존", 661, 3773),
+                    field("1", 381, 3791),  # anchor와 28px, 아래 보조줄과는 84px 차이
+                    field("(전", 270, 3875),
+                    field("1)", 437, 3884),
+                    field("제56호", 1537, 3875),
+                ]
+            }]
+        }
+        lines = reconstruct_lines_from_clova_result(clova_data)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("1 "))
+        self.assertIn("소유권보존", lines[0])
+        self.assertNotIn("소유권보존", lines[1])
 
     def test_field_without_text_or_coords_ignored(self):
         clova_data = {

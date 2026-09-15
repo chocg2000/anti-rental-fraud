@@ -58,6 +58,12 @@ REAL_NO_RESULT_XML = """<response>
   <fields></fields>
 </response>"""
 
+# 2026-09-15, 배포 서버(국내 리전)에서 실제로 받은 "결과 없음" 응답 원본(다세대주택 PNU로
+# 조회 — 이 API는 아파트 전용이라 애초에 대상이 아님). 위 REAL_NO_RESULT_XML은 <fields>가
+# 빈 채로라도 존재한다고 가정했었는데, 실제로는 totalCount=0일 때 <fields> 태그 자체가
+# 아예 빠진다 — 이전 가정이 틀렸었다는 걸 실제 응답으로 확인한 골든 픽스처.
+REAL_NO_RESULT_XML_NO_FIELDS_TAG = """<response><numOfRows>100</numOfRows><pageNo>1</pageNo><totalCount>0</totalCount></response>"""
+
 # 하나의 pnu(단지 전체)에 여러 동/호가 함께 돌아오는 경우를 가정한 픽스처
 # (dongNm/hoNm을 생략하고 조회했을 때를 대비 — 실제로 이렇게 오는지는 미확인).
 MULTIPLE_FIELDS_XML = """<response>
@@ -94,6 +100,10 @@ class TestParseResponse(unittest.TestCase):
     def test_real_no_result_xml_returns_none(self):
         # 골든 픽스처 — totalCount=0, fields 비어있음
         self.assertIsNone(_parse_response(REAL_NO_RESULT_XML))
+
+    def test_real_no_result_xml_without_fields_tag_returns_none(self):
+        # 2026-09-15 배포 서버에서 실제로 받은 형태 — <fields> 태그 자체가 없음
+        self.assertIsNone(_parse_response(REAL_NO_RESULT_XML_NO_FIELDS_TAG))
 
     def test_multiple_fields_uses_median(self):
         # 400,000,000 / 450,000,000 / 500,000,000원 -> 중위값 450,000,000원 -> 45,000만원
