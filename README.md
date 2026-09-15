@@ -364,13 +364,32 @@ DB 같은 공유 저장소로 바꿔야 한다. 없는 `id`로 조회하면 404.
 - 아직 없는 것: 배포 설정 (지금은 로컬 `localhost:5173`/`localhost:8000`만 동작) → 아래
   "Docker 배포 스캐폴딩" 섹션에서 뼈대는 잡아둠, 실제 서버에 올리는 건 다음 단계.
 
-## Docker 배포 스캐폴딩 (2026-09-14 작성 → 2026-09-15 정적 검토+인프라 고도화) — ⚠️ 빌드 미검증
+## Docker 배포 스캐폴딩 (2026-09-14 작성 → 09-15 정적 검토+인프라 고도화 → 09-15 실빌드 검증 완료) — ✅
 
-로컬에서 완전히 검증된 구조를 컨테이너로 옮기기 위한 뼈대. **이 개발 머신에 Docker 자체가
-없어서 실제 `docker compose build`/`up`은 아직 한 번도 못 돌려봤다** — 대신 파일들을
-정적으로 검토하면서 실제로 동작을 깨뜨릴 버그 2개를 찾아 고쳤다(아래 참고). 문법과 구성은
-표준 패턴을 따랐지만, 처음 빌드할 때 (특히 `pdfplumber` 등 파이썬 패키지의 시스템 의존성)
-글루 이슈가 있을 수 있으니 Docker 있는 환경에서 한 번 실제로 빌드해서 검증 필요.
+**2026-09-15 저녁, 이 개발 머신(Windows 11 Home)에 Docker Desktop을 설치해 실제로
+`docker compose build`/`up`까지 전부 돌려서 검증 완료.** 아래는 그 결과:
+
+- `docker compose build` — 백엔드/프론트엔드 이미지 둘 다 빌드 성공. `python:3.13-slim`
+  위에서 `pdfplumber`(cryptography/cffi 등 네이티브 의존성 포함)와
+  `apt-get install tesseract-ocr tesseract-ocr-kor poppler-utils`가 전부 문제없이
+  설치됨 — 이게 이 섹션에서 가장 걱정했던 지점이었는데 실제로는 깔끔했다.
+- `docker compose up -d` — 두 컨테이너 정상 기동. 프론트(nginx)가 `/api/`를
+  `http://backend:8000/`으로 정확히 프록시(컴포즈 내부 DNS로 서비스 이름 해석 확인).
+- 실제 카카오/국토부 키로 `POST /assessment` 엔드투엔드 성공(`transactionPrice: "ok"`,
+  `buildingRegister: "ok"`) — VWorld만 이 머신 특유의 IP 차단으로 여전히 `error`
+  (예상된 결과, 아래 "VWorld 배포 서버 검증 체크리스트" 참고).
+- **SQLite 볼륨 마운트 실검증** — `./data/assessments.db`가 호스트에 실제로 생성됨을
+  확인. 결정적으로, `docker compose down && docker compose up -d`(컨테이너 완전
+  재생성, 단순 재시작이 아님)를 실행한 뒤에도 `GET /assessment/{id}`로 이전 결과가
+  그대로 조회됨 — 오늘 낮에 고친 `ASSESSMENT_DB_PATH` 명시 고정(커밋 `6afb4f2`)이
+  실제로 의도대로 동작함을 실환경에서 확인.
+- `docker exec`로 컨테이너 안에서 `tesseract --version`(5.5.0, `kor` 언어팩 포함)과
+  `pdftoppm -v`(poppler 25.03.0) 직접 실행 확인 — `POST /registry/upload`가 실제로
+  쓸 실행파일들이 정상 동작.
+
+이걸로 이 프로젝트의 "로컬에서만 검증된 상태"의 마지막 큰 리스크(Docker 빌드)가 해소됐다.
+남은 건 VWorld(국내 리전 서버 필요)와 클로바 OCR(NCP 키 필요) 둘뿐 — 아래 "🎯 지금
+최우선" 섹션 참고.
 
 - **`Dockerfile`** (백엔드) — `python:3.13-slim` 기반, `apt-get install tesseract-ocr
   tesseract-ocr-kor poppler-utils`로 OCR 실행파일까지 이미지에 포함. 컨테이너 안에서는
@@ -488,12 +507,12 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
 
 ## 다음 단계 후보 (우선순위는 상황에 따라 조정)
 
-### 🎯 지금 최우선: 외부 리소스가 있어야만 풀리는 3개 과제
+### 🎯 지금 최우선: 외부 리소스가 있어야만 풀리는 2개 과제
 
-로컬 환경에서 로직·정적 검토·유닛테스트(현재 286개)만으로 도달할 수 있는 완성도에는
-도달했다. 남은 건 전부 "실제 시크릿 키/물리 환경이 있어야만" 검증 가능한 것들이고,
-추측으로는 더 못 좁힌다. 아래 3개는 서로 독립적이라 준비되는 대로 아무 순서로나
-진행하면 된다 — 다만 셋 다 끝나야 "로컬에서만 검증된 상태"를 벗어난다.
+로컬 환경에서 로직·정적 검토·유닛테스트(현재 286개)로 도달할 수 있는 완성도에는
+도달했고, ~~Docker 빌드 검증~~은 2026-09-15 저녁 이 머신에 Docker Desktop을 설치해
+**실제로 완료했다**(위 "Docker 배포 스캐폴딩" 섹션 참고). 남은 2개는 서로 독립적이라
+준비되는 대로 아무 순서로나 진행하면 된다.
 
 **국내 리전 서버 환경이 준비되면:**
 - [ ] `debug_vworld_call.py` 실행 — 싱가포르 IP 차단벽이 풀린 상태에서 공시가격 API
@@ -509,13 +528,6 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       실제 레이아웃에 맞게 보정 — 안 맞으면 이 함수만 고치면 됨(`parse_gapgu()`는
       안 건드려도 됨)
 
-**Docker가 설치된 환경이 준비되면:**
-- [ ] `docker compose up --build` 최초 실행 — 정적 검토로 잡아둔 버그(VWorld env
-      누락, SQLite 경로 고정)가 실제로 의도대로 동작하는지 확인
-- [ ] `python:3.13-slim` 이미지 안에서 `poppler-utils`/`tesseract-ocr` 바이너리
-      패키징이 깨지지 않는지, `docker compose down && up`을 반복해도
-      `/app/data/assessments.db`(및 `/result/:id` 결과)가 살아있는지 확인
-
 ---
 
 - [x] `full_assessment.py` 오케스트레이터 작성
@@ -529,9 +541,9 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       진짜 PDF로 엔드투엔드 재검증 완료 — 위 "Tesseract/Poppler 실환경 검증" 섹션 참고.
       Ubuntu 배포 서버에서는 `apt-get` 설치 후 재확인 권장(기본값으로 바로 동작 예상)
 - [x] 라우팅(`react-router-dom`) + 세션스토리지 지속성 + 결과 재조회용 `GET /assessment/{id}`
-- [x] Docker 배포 스캐폴딩 작성 (`Dockerfile`, `frontend/Dockerfile`, `docker-compose.yml`) —
-      **빌드 미검증**, 이 머신에 Docker 없어서 실제로 못 돌려봄. Docker 있는 환경에서
-      `docker compose up --build` 한 번 실행해서 검증 필요 (위 섹션 참고)
+- [x] Docker 배포 스캐폴딩 작성 (`Dockerfile`, `frontend/Dockerfile`, `docker-compose.yml`) →
+      **2026-09-15 실빌드 검증 완료** (Docker Desktop 설치 후 `docker compose up --build`
+      실행, SQLite 볼륨 영속성까지 확인 — 위 "Docker 배포 스캐폴딩" 섹션 참고)
 - [x] VWorld 공시가격 연동 — 정확한 엔드포인트(`ned/data/getApartHousingPriceAttr`) 확인,
       XML 파싱으로 재작성, 실제 성공 응답으로 검증 완료 (2026-09-15, 지인 브라우저 경유) —
       위 "VWorld 공시가격 연동" 섹션 참고. `property_aggregator.py` 통합도 이미 돼 있어
@@ -613,7 +625,22 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       실제로 `docker compose up --build`까지 돌려서 최종 검증할 것.
 
 ---
-**최근 업데이트**: 2026-09-15 세션 추가분(4) — 등기부 본문(갑구) 소유권 이전 이력 확보
+**최근 업데이트**: 2026-09-15 저녁 세션 — **Docker 실빌드 검증 완료.** 이 개발
+머신(Windows 11 Home)에 Docker Desktop을 처음 설치(관리자 권한 없이 사용자 레벨
+설치 — `AppData\Local\Programs\DockerDesktop`, WSL2 백엔드는 이미 구성돼 있었음)하고
+`docker compose build`/`up`을 실제로 돌렸다. 결과: 백엔드/프론트엔드 이미지 둘 다
+빌드 성공, `pdfplumber`/`tesseract-ocr`/`poppler-utils` 전부 문제없이 설치됨(이
+프로젝트가 가장 걱정했던 지점). 실제 카카오/국토부 키로 `POST /assessment`
+엔드투엔드 성공. 결정적으로 — 낮 세션에 고친 `ASSESSMENT_DB_PATH` 명시 고정(커밋
+`6afb4f2`)을 `docker compose down && up`(컨테이너 완전 재생성)으로 실제 검증:
+`./data/assessments.db`가 호스트에 생성되고, 재생성 후에도 `GET /assessment/{id}`
+결과가 그대로 살아있음을 확인. `docker exec`로 컨테이너 안 tesseract(5.5.0, kor
+언어팩)/poppler 실행도 직접 확인. 이걸로 README의 "🎯 지금 최우선" 3개 과제 중
+Docker 항목 완료 — 남은 건 VWorld(국내 리전 서버)와 클로바 OCR(NCP 키) 2개뿐.
+백엔드 테스트/코드 변경 없음(순수 인프라 실행 검증).
+
+---
+**이전 업데이트**: 2026-09-15 세션 추가분(4) — 등기부 본문(갑구) 소유권 이전 이력 확보
 경로에 네이버 클로바 OCR 연동 설계+로직 착수(위 "네이버 클로바 OCR 연동 설계" 섹션
 참고). 핵심 발견: `registry_parser.py`의 `parse_gapgu()`/`parse_eulgu()`가 이미
 완성돼 있고 테스트 12개가 통과한 상태였다는 것 — 새로 만들 건 판별 로직이 아니라
