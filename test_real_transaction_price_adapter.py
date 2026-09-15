@@ -314,12 +314,80 @@ XML_OFFICETEL_WITH_OFFI_NAME = """<response>
 </response>"""
 
 
+# 2026-09-15 실제 승인 키로 LAWD_CD=11680, DEAL_YMD=202508 호출해 받은 진짜 응답 중 1건씩
+# (debug_villa_officetel_call.py). mhouseNm/offiNm 등 위 합성 fixture의 태그명 가정이
+# 전부 실제 응답과 일치함을 확인한 회귀 테스트용 — 아파트의 XML_REAL_CAPTURED_APGUJEONG와
+# 같은 역할.
+XML_REAL_CAPTURED_VILLA = """<response>
+  <header><resultCode>000</resultCode><resultMsg>OK</resultMsg></header>
+  <body>
+    <items>
+      <item>
+        <buildYear>1993</buildYear>
+        <buyerGbn>개인</buyerGbn>
+        <cdealDay> </cdealDay>
+        <cdealType> </cdealType>
+        <dealAmount>112,000</dealAmount>
+        <dealDay>18</dealDay>
+        <dealMonth>8</dealMonth>
+        <dealYear>2025</dealYear>
+        <dealingGbn>직거래</dealingGbn>
+        <estateAgentSggNm> </estateAgentSggNm>
+        <excluUseAr>59.75</excluUseAr>
+        <floor>1</floor>
+        <houseType>연립</houseType>
+        <jibun>739</jibun>
+        <landAr>82.93</landAr>
+        <mhouseNm>청솔빌리지</mhouseNm>
+        <rgstDate>25.11.28</rgstDate>
+        <sggCd>11680</sggCd>
+        <slerGbn>개인</slerGbn>
+        <umdNm>일원동</umdNm>
+      </item>
+    </items>
+    <numOfRows>10</numOfRows>
+    <pageNo>1</pageNo>
+    <totalCount>1</totalCount>
+  </body>
+</response>"""
+
+XML_REAL_CAPTURED_OFFICETEL = """<response>
+  <header><resultCode>000</resultCode><resultMsg>OK</resultMsg></header>
+  <body>
+    <items>
+      <item>
+        <buildYear>2014</buildYear>
+        <buyerGbn>개인</buyerGbn>
+        <cdealDay> </cdealDay>
+        <cdealType> </cdealType>
+        <dealAmount>13,500</dealAmount>
+        <dealDay>23</dealDay>
+        <dealMonth>8</dealMonth>
+        <dealYear>2025</dealYear>
+        <dealingGbn>중개거래</dealingGbn>
+        <estateAgentSggNm>서울 강남구</estateAgentSggNm>
+        <excluUseAr>21.872</excluUseAr>
+        <floor>5</floor>
+        <jibun>655</jibun>
+        <offiNm>강남 푸르지오시티 2차(PRUGIO CITYⅡ)</offiNm>
+        <sggCd>11680</sggCd>
+        <sggNm>강남구</sggNm>
+        <slerGbn>개인</slerGbn>
+        <umdNm>자곡동</umdNm>
+      </item>
+    </items>
+    <numOfRows>10</numOfRows>
+    <pageNo>1</pageNo>
+    <totalCount>1</totalCount>
+  </body>
+</response>"""
+
+
 class TestParseVillaAndOfficetelTradeXml(unittest.TestCase):
     """
-    ⚠️ 아래 fixture의 mhouseNm/offiNm 태그명은 실제 응답으로 검증된 게 아니라
-    real_transaction_price_adapter.py 모듈 docstring에 적어둔 추정치다. 여기서는
-    "이름 태그가 파라미터화된 대로 정확히 반영되는지"라는 파싱 로직 자체만 검증하고,
-    실제 국토부 응답과 태그명이 맞는지는 별개로 실키 검증이 필요하다.
+    합성 fixture(태그 구조를 손으로 단순화)로 파싱 로직 자체(이름 태그 파라미터화,
+    취소 건 제외 등)를 검증한다. mhouseNm/offiNm 등 실제 태그명 자체가 맞는지는
+    아래 TestRealCapturedVillaAndOfficetel(실제 캡처된 응답 기반)이 검증한다.
     """
 
     def test_villa_xml_parsed_with_mhouse_name_tag(self):
@@ -349,6 +417,46 @@ class TestParseVillaAndOfficetelTradeXml(unittest.TestCase):
     def test_villa_xml_auth_error_raises(self):
         with self.assertRaises(TransactionApiError):
             parse_villa_trade_xml(XML_AUTH_ERROR_STANDARD_FORMAT)
+
+
+class TestRealCapturedVillaAndOfficetel(unittest.TestCase):
+    """
+    실제 승인 키로 확인된 응답(위 XML_REAL_CAPTURED_VILLA/OFFICETEL) 기반 회귀 테스트 —
+    mhouseNm/offiNm/dealAmount/excluUseAr/umdNm/houseType 태그명 가정이 실제와
+    일치한다는 걸 이 테스트가 깨지지 않는 한 계속 보증한다.
+    """
+
+    def test_parses_real_captured_villa_response_correctly(self):
+        trades = parse_villa_trade_xml(XML_REAL_CAPTURED_VILLA)
+
+        self.assertEqual(len(trades), 1)
+        trade = trades[0]
+        self.assertEqual(trade["dealAmount"], 112000)
+        self.assertEqual(trade["aptName"], "청솔빌리지")
+        self.assertEqual(trade["dong"], "일원동")
+        self.assertEqual(trade["exclusiveArea"], 59.75)
+        self.assertEqual(trade["houseType"], "연립")
+        self.assertEqual(trade["dealYear"], "2025")
+        self.assertEqual(trade["dealMonth"], "8")
+
+    def test_parses_real_captured_officetel_response_correctly(self):
+        trades = parse_officetel_trade_xml(XML_REAL_CAPTURED_OFFICETEL)
+
+        self.assertEqual(len(trades), 1)
+        trade = trades[0]
+        self.assertEqual(trade["dealAmount"], 13500)
+        self.assertEqual(trade["aptName"], "강남 푸르지오시티 2차(PRUGIO CITYⅡ)")
+        self.assertEqual(trade["dong"], "자곡동")
+        self.assertEqual(trade["exclusiveArea"], 21.872)
+        # 오피스텔 응답엔 houseType 태그 자체가 없다 — 빈 문자열로 안전하게 떨어져야 한다.
+        self.assertEqual(trade["houseType"], "")
+
+    def test_real_captured_cdealtype_with_single_space_is_not_cancelled(self):
+        # 실제 응답에서 취소 안 된 건은 <cdealType></cdealType>이 아니라
+        # <cdealType> </cdealType>(공백 한 칸)로 온다 — strip() 처리가 안 됐다면
+        # "공백도 값이 있는 것"으로 오판해 정상 거래를 취소 건으로 제외했을 것이다.
+        trades = parse_villa_trade_xml(XML_REAL_CAPTURED_VILLA)
+        self.assertEqual(len(trades), 1)
 
 
 class TestFetchVillaAndOfficetelTrades(unittest.TestCase):

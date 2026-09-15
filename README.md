@@ -520,14 +520,16 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
 - [x] 연립다세대/오피스텔 전용 국토부 실거래가 API 연동 — `real_transaction_price_adapter.py`에
       `fetch_villa_trades`(RTMSDataSvcRHTrade)/`fetch_officetel_trades`(RTMSDataSvcOffiTrade)
       추가, `property_aggregator.py`가 property_type별로 올바른 엔드포인트를 골라 쓰도록
-      배선(`_trade_fetch_fn_for()`). ⚠️ 아직 우리 MOLIT_SERVICE_KEY로 직접 검증하지는
-      않았다 — 세션 중 태그명 관련 정보가 엇갈려서(한글 태그 주장 vs 영문 태그 주장) GitHub의
-      독립 오픈소스 MOLIT 클라이언트(tae0y/real-estate-mcp)를 찾아 대조했고, 정확히 같은
-      엔드포인트(Dev 접미사 없음)와 같은 영문 태그(mhouseNm/offiNm/dealAmount/excluUseAr/
-      umdNm/cdealType)를 쓰고 있어 지금 구현이 맞을 개연성이 높다고 보고 채택함 — 그래도
-      "실제 검증"은 아니므로 실키가 생기면 `debug_villa_officetel_call.py`부터 돌려서
-      확인할 것(스크립트 신규 작성 완료). 시세 계산 핵심 필드(dealAmount 등)는 세 API가
-      공통이라, 설령 "매물명" 태그가 틀려도 시세 계산 자체는 안 깨지는 구조.
+      배선(`_trade_fetch_fn_for()`). ✅ **실키로 검증 완료** (2026-09-15, data.go.kr에서
+      두 API 상품 활용신청 승인 후 `debug_villa_officetel_call.py`를 실제 승인 키로 실행,
+      LAWD_CD=11680/DEAL_YMD=202508) — mhouseNm(연립다세대 매물명)/offiNm(오피스텔
+      매물명)/dealAmount/excluUseAr/umdNm/dealYear·Month·Day/cdealType/floor/jibun 전부
+      실제 응답과 정확히 일치함을 확인. 이 코드를 처음 짤 때 세션 중 태그명 정보가 엇갈려서
+      (한글 태그 주장 vs 영문 태그 주장) GitHub의 독립 오픈소스 MOLIT 클라이언트
+      (tae0y/real-estate-mcp)로 먼저 교차검증했었는데, 실제 응답도 정확히 그 구조와
+      일치했다. 덤으로 연립다세대 응답에만 있는 `houseType`("연립"|"다세대") 필드를
+      새로 파싱 결과에 포함시킴. 실제 응답 기반 회귀 테스트(`XML_REAL_CAPTURED_VILLA`/
+      `OFFICETEL`)를 `test_real_transaction_price_adapter.py`에 추가.
 - [x] Docker 배포 인프라 고도화 — (1) `docker-compose.yml`에 `VWORLD_API_KEY`/
       `VWORLD_DOMAIN` 환경변수가 아예 안 넘어가던 버그 발견/수정(로컬에서 검증해둔 VWorld
       연동이 Docker 배포에서는 항상 꺼져있었을 것). (2) `POST /assessment`의 저장소를
@@ -547,7 +549,21 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       실제로 `docker compose up --build`까지 돌려서 최종 검증할 것.
 
 ---
-**최근 업데이트**: 2026-09-15 세션 추가분 (커밋 `6afb4f2`) — SQLite DB 경로를
+**최근 업데이트**: 2026-09-15 세션 추가분(2) — 연립다세대/오피스텔 국토부 API 실키 검증
+완료. data.go.kr에서 RTMSDataSvcRHTrade/RTMSDataSvcOffiTrade 두 API 상품 활용신청이
+승인된 직후 `debug_villa_officetel_call.py`를 실제 키로 실행(LAWD_CD=11680,
+DEAL_YMD=202508) — mhouseNm/offiNm/dealAmount/excluUseAr/umdNm 등 기존에 "개연성이
+높다"고만 판단했던 태그 가정이 전부 실제 응답과 정확히 일치함을 확인했다. 스크립트
+자체도 두 가지 버그를 고쳤다: `.env`를 안 읽어서(`load_dotenv()` 누락) 키가 항상
+비어있던 것으로 뜬 문제, 그리고 경고 이모지(⚠️)가 이 Windows 터미널의 cp949 콘솔
+인코딩에서 `UnicodeEncodeError`로 죽던 문제. 연립다세대 응답에서 새로 발견한
+`houseType`("연립"|"다세대") 필드도 파싱 결과에 추가. 실제 캡처된 응답을 회귀
+테스트(`XML_REAL_CAPTURED_VILLA`/`OFFICETEL`)로 고정해서 `real_transaction_price_adapter.py`
+모듈 docstring의 "⚠️ 미검증" 경고를 전부 "✅ 검증 완료"로 바꿈. 백엔드 테스트 227→230개
+전부 통과.
+
+---
+**이전 업데이트**: 2026-09-15 세션 추가분 (커밋 `6afb4f2`) — SQLite DB 경로를
 `docker-compose.yml`에서 `ASSESSMENT_DB_PATH=/app/data/assessments.db`로 명시 고정.
 직전 커밋에서 볼륨(`./data:/app/data`)은 추가했지만 `assessment_store.py`의 기본
 경로(상대경로 "data/assessments.db")는 `Dockerfile`의 `WORKDIR /app`과 우연히

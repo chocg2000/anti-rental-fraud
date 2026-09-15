@@ -32,8 +32,8 @@ def _trade_fetch_fn_for(property_type: str):
     """
     property_type -> 국토부 실거래 fetch 함수. "연립다세대" API 한 종류가 통계법상
     연립주택+다세대주택을 모두 커버하므로 "villa"/"multi_household" 둘 다 여기로 간다.
-    ⚠️ villa/officetel 쪽은 real_transaction_price_adapter.py 모듈 docstring에 적어둔
-    대로 태그명이 미검증 상태다.
+    villa/officetel 쪽 태그명도 실키로 검증 완료(real_transaction_price_adapter.py
+    모듈 docstring 참고).
 
     이 매핑을 모듈 최상단에 상수 dict로 미리 만들어두지 않고 매번 함수 호출 시점에
     만드는 이유: 상수로 만들면 import 시점의 fetch_apt_trades 등 함수 객체를 그대로
@@ -117,9 +117,8 @@ def get_property_info(address_query: str, target_area: float, as_of: date | None
     Args:
         property_type: "apartment" | "villa" | "officetel" | "multi_household".
             _trade_fetch_fn_for() 매핑에 따라 국토부 실거래 엔드포인트를 골라 조회한다
-            (아파트=AptTradeDev, 빌라/다세대=RHTrade, 오피스텔=OffiTrade —
-            real_transaction_price_adapter.py 참고). ⚠️ RHTrade/OffiTrade는 아직
-            실키로 응답 구조를 확인 못 한 미검증 엔드포인트다. 매핑에 없는 값이 오면
+            (아파트=AptTradeDev, 빌라/다세대=RHTrade, 오피스텔=OffiTrade — 셋 다 실키로
+            검증 완료, real_transaction_price_adapter.py 참고). 매핑에 없는 값이 오면
             (또는 향후 실거래 자체가 불가능한 유형이 생기면) 안전하게 조회를 건너뛴다
             — 실제로 54㎡ 다세대가 근처 아파트 실거래 기준 14.375억으로 잘못 나오고
             실제 시세는 9~10억이었던 버그(아파트 데이터를 모든 유형에 그대로 썼던 것)를

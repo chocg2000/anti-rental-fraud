@@ -25,22 +25,19 @@ RealTransactionPriceAdapter 프로토타입
 5. 해제(취소)된 거래는 상세 자료(Dev) 기준으로 <cdealType> 태그에 값이 채워진다
    (일반 자료의 <해제여부>="O"에 대응). 값이 비어있지 않으면 취소 건으로 간주해 제외한다.
 
-⚠️ 연립다세대(RHTrade)/오피스텔(OffiTrade) 태그명은 아직 우리 MOLIT_SERVICE_KEY로 직접
-검증한 적은 없다 — 단, 이 코드를 짜면서 세션 중 관련 정보에 혼선이 있어(어떤 자료는
-한글 태그 <연립다세대>/<단지>/<거래금액>이라고 주장, 어떤 자료는 영문 태그라고 주장)
-GitHub의 독립적인 오픈소스 MOLIT API 클라이언트(tae0y/real-estate-mcp,
-src/real_estate/mcp_server/parsers/trade.py)를 직접 찾아 대조했다. 그 구현체가 정확히
-같은 엔드포인트(RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade, RTMSDataSvcOffiTrade/
-getRTMSDataSvcOffiTrade — Dev 접미사 없음)와 같은 영문 태그(연립다세대=mhouseNm,
-오피스텔=offiNm, 공통 dealAmount/dealYear/Month/Day/umdNm/excluUseAr/cdealType)를
-쓰고 있어서, 아래 구현이 맞을 가능성이 높다고 판단해 그대로 뒀다. 하지만 이건 여전히
-"우리가 실제로 검증"한 게 아니라 "남의 구현과 비교해 개연성이 높다"는 수준이다 —
-public_price_adapter.py가 겪었던 함정과 근본적으로 같은 리스크이므로, 실제
-MOLIT_SERVICE_KEY로 `debug_villa_officetel_call.py`를 반드시 한 번 돌려 진짜 응답을
-찍어보고 이 경고를 지울 것. 다행히 "매물명" 태그는 market_price_estimator.py가 전혀
-안 쓰는 참고용 필드라, 설령 이름이 틀려도 시세 계산 자체(dealAmount/excluUseAr/dealDate/
-umdNm)는 안 깨진다 — 이 핵심 필드들이 세 API에서 공통 태그를 쓴다는 점은 위 독립
-구현체에서도 일관되게 확인됐다.
+✅ 연립다세대(RHTrade)/오피스텔(OffiTrade) 태그명 실제 검증 완료 (2026-09-15,
+`debug_villa_officetel_call.py`를 실제 승인 키로 실행 — LAWD_CD=11680, DEAL_YMD=202508).
+이 코드를 처음 짤 때 세션 중 관련 정보에 혼선이 있어서(어떤 자료는 한글 태그
+<연립다세대>/<단지>/<거래금액>이라고 주장, 어떤 자료는 영문 태그라고 주장) GitHub의
+독립 오픈소스 MOLIT API 클라이언트(tae0y/real-estate-mcp)로 먼저 교차검증했었는데,
+실제 응답도 정확히 그 구조와 일치했다:
+  - 연립다세대: mhouseNm(매물명), dealAmount, excluUseAr, umdNm, dealYear/Month/Day,
+    cdealType, floor, jibun, dealingGbn — 전부 아파트(AptTradeDev)와 동일한 영문 태그.
+    추가로 houseType("연립"|"다세대") 필드가 실제로 존재해서 파싱 결과에 포함시켰다.
+  - 오피스텔: offiNm(매물명) 외 핵심 필드는 연립다세대/아파트와 동일.
+  - cdealType은 취소 안 된 건도 빈 문자열이 아니라 "<cdealType> </cdealType>"처럼
+    공백 한 칸이 들어있는 경우가 있었다 — `_text()`가 strip()하므로 그대로 ""가 되어
+    기존 취소 판별 로직(`bool(...)`)에 영향 없음.
 """
 
 import os
@@ -140,6 +137,10 @@ def _parse_trade_xml(xml_text: str, name_tag: str) -> list[dict]:
             "jibun": _text(item, "jibun"),
             "floor": _text(item, "floor"),
             "dealType": _text(item, "dealingGbn"),  # 중개거래/직거래
+            # 연립다세대(RHTrade)에만 실제로 존재하는 필드("연립"|"다세대") — 아파트/
+            # 오피스텔 응답에는 이 태그 자체가 없어서 빈 문자열로 채워진다(2026-09-15
+            # 실키 검증으로 확인).
+            "houseType": _text(item, "houseType"),
         })
 
     return trades
@@ -151,18 +152,12 @@ def parse_apt_trade_xml(xml_text: str) -> list[dict]:
 
 
 def parse_villa_trade_xml(xml_text: str) -> list[dict]:
-    """
-    국토부 연립다세대매매 실거래 '상세(Dev)' API 응답 파싱.
-    ⚠️ 미검증 — 모듈 docstring 경고 참고. "매물명" 태그를 mhouseNm으로 추정했다.
-    """
+    """국토부 연립다세대매매 실거래 '상세(Dev)' API 응답 파싱 — 검증 완료(모듈 docstring 참고)."""
     return _parse_trade_xml(xml_text, name_tag="mhouseNm")
 
 
 def parse_officetel_trade_xml(xml_text: str) -> list[dict]:
-    """
-    국토부 오피스텔매매 실거래 '상세(Dev)' API 응답 파싱.
-    ⚠️ 미검증 — 모듈 docstring 경고 참고. "매물명" 태그를 offiNm으로 추정했다.
-    """
+    """국토부 오피스텔매매 실거래 '상세(Dev)' API 응답 파싱 — 검증 완료(모듈 docstring 참고)."""
     return _parse_trade_xml(xml_text, name_tag="offiNm")
 
 
@@ -214,16 +209,10 @@ def fetch_apt_trades(legal_dong_code_5: str, deal_ym: str) -> dict:
 
 
 def fetch_villa_trades(legal_dong_code_5: str, deal_ym: str) -> dict:
-    """
-    연립다세대매매 실거래 조회 (property_type "villa"/"multi_household" 대상).
-    ⚠️ 미검증 — 모듈 docstring 경고 참고.
-    """
+    """연립다세대매매 실거래 조회 (property_type "villa"/"multi_household" 대상) — 검증 완료."""
     return _fetch_trades(RH_API_URL, parse_villa_trade_xml, legal_dong_code_5, deal_ym)
 
 
 def fetch_officetel_trades(legal_dong_code_5: str, deal_ym: str) -> dict:
-    """
-    오피스텔매매 실거래 조회 (property_type "officetel" 대상).
-    ⚠️ 미검증 — 모듈 docstring 경고 참고.
-    """
+    """오피스텔매매 실거래 조회 (property_type "officetel" 대상) — 검증 완료."""
     return _fetch_trades(OFFI_API_URL, parse_officetel_trade_xml, legal_dong_code_5, deal_ym)
