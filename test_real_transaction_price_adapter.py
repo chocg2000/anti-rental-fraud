@@ -12,7 +12,11 @@ from unittest.mock import patch, Mock
 
 from real_transaction_price_adapter import (
     parse_apt_trade_xml,
+    parse_villa_trade_xml,
+    parse_officetel_trade_xml,
     fetch_apt_trades,
+    fetch_villa_trades,
+    fetch_officetel_trades,
     TransactionApiError,
 )
 
@@ -257,6 +261,156 @@ class TestParseAptTradeXml(unittest.TestCase):
     def test_broken_xml_raises(self):
         with self.assertRaises(TransactionApiError):
             parse_apt_trade_xml(NOT_EVEN_XML)
+
+
+XML_VILLA_WITH_MHOUSE_NAME = """<response>
+  <header><resultCode>000</resultCode><resultMsg>OK</resultMsg></header>
+  <body>
+    <items>
+      <item>
+        <dealAmount>65,000</dealAmount>
+        <buildYear>2019</buildYear>
+        <dealYear>2025</dealYear>
+        <dealMonth>3</dealMonth>
+        <dealDay>26</dealDay>
+        <umdNm>야탑동</umdNm>
+        <mhouseNm>장미마을</mhouseNm>
+        <excluUseAr>54.0</excluUseAr>
+        <jibun>335</jibun>
+        <floor>2</floor>
+        <cdealType></cdealType>
+        <dealingGbn>중개거래</dealingGbn>
+      </item>
+    </items>
+    <numOfRows>10</numOfRows>
+    <pageNo>1</pageNo>
+    <totalCount>1</totalCount>
+  </body>
+</response>"""
+
+XML_OFFICETEL_WITH_OFFI_NAME = """<response>
+  <header><resultCode>000</resultCode><resultMsg>OK</resultMsg></header>
+  <body>
+    <items>
+      <item>
+        <dealAmount>32,000</dealAmount>
+        <buildYear>2015</buildYear>
+        <dealYear>2025</dealYear>
+        <dealMonth>6</dealMonth>
+        <dealDay>1</dealDay>
+        <umdNm>역삼동</umdNm>
+        <offiNm>테스트오피스텔</offiNm>
+        <excluUseAr>21.5</excluUseAr>
+        <jibun>50</jibun>
+        <floor>8</floor>
+        <cdealType></cdealType>
+        <dealingGbn>중개거래</dealingGbn>
+      </item>
+    </items>
+    <numOfRows>10</numOfRows>
+    <pageNo>1</pageNo>
+    <totalCount>1</totalCount>
+  </body>
+</response>"""
+
+
+class TestParseVillaAndOfficetelTradeXml(unittest.TestCase):
+    """
+    ⚠️ 아래 fixture의 mhouseNm/offiNm 태그명은 실제 응답으로 검증된 게 아니라
+    real_transaction_price_adapter.py 모듈 docstring에 적어둔 추정치다. 여기서는
+    "이름 태그가 파라미터화된 대로 정확히 반영되는지"라는 파싱 로직 자체만 검증하고,
+    실제 국토부 응답과 태그명이 맞는지는 별개로 실키 검증이 필요하다.
+    """
+
+    def test_villa_xml_parsed_with_mhouse_name_tag(self):
+        trades = parse_villa_trade_xml(XML_VILLA_WITH_MHOUSE_NAME)
+
+        self.assertEqual(len(trades), 1)
+        trade = trades[0]
+        self.assertEqual(trade["dealAmount"], 65000)
+        self.assertEqual(trade["aptName"], "장미마을")
+        self.assertEqual(trade["dong"], "야탑동")
+        self.assertEqual(trade["exclusiveArea"], 54.0)
+
+    def test_officetel_xml_parsed_with_offi_name_tag(self):
+        trades = parse_officetel_trade_xml(XML_OFFICETEL_WITH_OFFI_NAME)
+
+        self.assertEqual(len(trades), 1)
+        trade = trades[0]
+        self.assertEqual(trade["dealAmount"], 32000)
+        self.assertEqual(trade["aptName"], "테스트오피스텔")
+        self.assertEqual(trade["exclusiveArea"], 21.5)
+
+    def test_villa_xml_still_excludes_cancelled_trade(self):
+        # 취소 판별(cdealType) 로직은 공유 코드이므로 아파트와 동일하게 동작해야 한다.
+        trades = parse_villa_trade_xml(XML_WITH_CANCELLED_TRADE)
+        self.assertEqual(len(trades), 1)
+
+    def test_villa_xml_auth_error_raises(self):
+        with self.assertRaises(TransactionApiError):
+            parse_villa_trade_xml(XML_AUTH_ERROR_STANDARD_FORMAT)
+
+
+class TestFetchVillaAndOfficetelTrades(unittest.TestCase):
+
+    @patch("real_transaction_price_adapter.requests.get")
+    def test_fetch_villa_trades_ok(self, mock_get):
+        mock_get.return_value = Mock(text=XML_VILLA_WITH_MHOUSE_NAME)
+        mock_get.return_value.raise_for_status.return_value = None
+
+        result = fetch_villa_trades("41135", "202503")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"][0]["aptName"], "장미마을")
+
+    @patch("real_transaction_price_adapter.requests.get")
+    def test_fetch_villa_trades_calls_rh_endpoint(self, mock_get):
+        mock_get.return_value = Mock(text=XML_NO_TRANSACTIONS)
+        mock_get.return_value.raise_for_status.return_value = None
+
+        fetch_villa_trades("41135", "202503")
+
+        called_url = mock_get.call_args.args[0]
+        self.assertIn("RTMSDataSvcRHTrade", called_url)
+
+    @patch("real_transaction_price_adapter.requests.get")
+    def test_fetch_officetel_trades_ok(self, mock_get):
+        mock_get.return_value = Mock(text=XML_OFFICETEL_WITH_OFFI_NAME)
+        mock_get.return_value.raise_for_status.return_value = None
+
+        result = fetch_officetel_trades("11680", "202506")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"][0]["aptName"], "테스트오피스텔")
+
+    @patch("real_transaction_price_adapter.requests.get")
+    def test_fetch_officetel_trades_calls_offi_endpoint(self, mock_get):
+        mock_get.return_value = Mock(text=XML_NO_TRANSACTIONS)
+        mock_get.return_value.raise_for_status.return_value = None
+
+        fetch_officetel_trades("11680", "202506")
+
+        called_url = mock_get.call_args.args[0]
+        self.assertIn("RTMSDataSvcOffiTrade", called_url)
+
+    @patch("real_transaction_price_adapter.requests.get")
+    def test_fetch_villa_trades_not_found(self, mock_get):
+        mock_get.return_value = Mock(text=XML_NO_TRANSACTIONS)
+        mock_get.return_value.raise_for_status.return_value = None
+
+        result = fetch_villa_trades("41135", "202503")
+
+        self.assertEqual(result["status"], "not_found")
+
+    @patch("real_transaction_price_adapter.requests.get")
+    def test_fetch_officetel_trades_invalid_key(self, mock_get):
+        mock_get.return_value = Mock(text=XML_AUTH_ERROR_STANDARD_FORMAT)
+        mock_get.return_value.raise_for_status.return_value = None
+
+        result = fetch_officetel_trades("11680", "202506")
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["reason"], "invalid_request")
 
 
 class TestFetchAptTrades(unittest.TestCase):

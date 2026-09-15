@@ -321,10 +321,11 @@ DB 같은 공유 저장소로 바꿔야 한다. 없는 `id`로 조회하면 404.
 - 아직 없는 것: 배포 설정 (지금은 로컬 `localhost:5173`/`localhost:8000`만 동작) → 아래
   "Docker 배포 스캐폴딩" 섹션에서 뼈대는 잡아둠, 실제 서버에 올리는 건 다음 단계.
 
-## Docker 배포 스캐폴딩 (2026-09-14) — ⚠️ 빌드 미검증
+## Docker 배포 스캐폴딩 (2026-09-14 작성 → 2026-09-15 정적 검토+인프라 고도화) — ⚠️ 빌드 미검증
 
 로컬에서 완전히 검증된 구조를 컨테이너로 옮기기 위한 뼈대. **이 개발 머신에 Docker 자체가
-없어서 실제 `docker compose build`/`up`은 아직 한 번도 못 돌려봤다** — 문법과 구성은
+없어서 실제 `docker compose build`/`up`은 아직 한 번도 못 돌려봤다** — 대신 파일들을
+정적으로 검토하면서 실제로 동작을 깨뜨릴 버그 2개를 찾아 고쳤다(아래 참고). 문법과 구성은
 표준 패턴을 따랐지만, 처음 빌드할 때 (특히 `pdfplumber` 등 파이썬 패키지의 시스템 의존성)
 글루 이슈가 있을 수 있으니 Docker 있는 환경에서 한 번 실제로 빌드해서 검증 필요.
 
@@ -332,22 +333,55 @@ DB 같은 공유 저장소로 바꿔야 한다. 없는 `id`로 조회하면 404.
   tesseract-ocr-kor poppler-utils`로 OCR 실행파일까지 이미지에 포함. 컨테이너 안에서는
   이 실행파일들이 PATH에 바로 잡히므로 `TESSERACT_CMD` 같은 환경변수는 필요 없음
   (Windows 로컬 개발 환경에서만 필요했던 것과 대비됨 — 위 "Tesseract/Poppler 실환경 검증"
-  섹션 참고).
+  섹션 참고). `COPY *.py ./`가 `assessment_store.py` 등 새 파일도 자동으로 포함하므로
+  이 파일 자체는 안 건드려도 됨.
 - **`frontend/Dockerfile`** — Node로 빌드 후 nginx로 정적 서빙하는 2단계 빌드.
   `frontend/nginx.conf`가 `vite.config.js`의 dev 프록시(`/api` → `127.0.0.1:8000`)와
   똑같은 역할을 함(`/api/` → `http://backend:8000/`, 컴포즈 서비스 이름으로 라우팅) +
   `react-router-dom` 클라이언트 라우팅을 위한 `try_files ... /index.html` SPA 폴백.
 - **`docker-compose.yml`** — `backend`/`frontend` 두 서비스. **비밀키는 이미지에 절대
   안 굽는다** — `.dockerignore`가 `.env`를 빌드 컨텍스트에서 제외하고, 컴포즈가 `${...}`
-  치환으로 `KAKAO_REST_API_KEY`/`MOLIT_SERVICE_KEY` 딱 두 개만 골라서 컨테이너
-  환경변수로 주입함. 이 방식 덕분에 `.env`에 있는 Windows 전용 `TESSERACT_CMD` 등의
-  로컬 경로가 컨테이너 안으로 새어 들어가지 않음(어차피 컨테이너 안엔 필요도 없음).
+  치환으로 필요한 값만 골라서 컨테이너 환경변수로 주입함. 이 방식 덕분에 `.env`에 있는
+  Windows 전용 `TESSERACT_CMD` 등의 로컬 경로가 컨테이너 안으로 새어 들어가지 않음
+  (어차피 컨테이너 안엔 필요도 없음).
+  - 🐛 **2026-09-15 정적 검토로 발견/수정한 버그**: `VWORLD_API_KEY`/`VWORLD_DOMAIN`이
+    환경변수 목록에 아예 빠져있었다 — `KAKAO_REST_API_KEY`/`MOLIT_SERVICE_KEY`만 있었음.
+    로컬에서 실제로 검증해둔 VWorld 공시가격 연동이, Docker로 배포하면 이 값이 안 넘어가서
+    `public_price_adapter.py`가 조용히 항상 "키 없음" 상태(`status: "error"`)로 죽어있는
+    채였을 것 — 크래시가 아니라 조용히 죽는 종류의 버그라 실제 배포 전엔 못 알아챘을 위험.
+  - 지금은 두 값 모두 추가돼 있음 — 배포 시 `.env`에 `VWORLD_API_KEY`/`VWORLD_DOMAIN`도
+    반드시 채워져 있는지 확인할 것(`VWORLD_DOMAIN`은 vworld 키 발급 시 등록한 도메인과
+    일치해야 함 — "localhost"로 발급받았다면 운영 도메인으로 재발급 필요할 수 있음).
+- **SQLite 볼륨** (2026-09-15 추가): `POST /assessment` 결과 저장소가 인메모리 dict에서
+  SQLite(`assessment_store.py`)로 바뀌면서, `docker-compose.yml`에 `./data:/app/data`
+  볼륨을 추가했다 — 이게 없으면 컨테이너를 재생성할 때마다(재배포, `down`/`up` 등)
+  `/result/:id` 공유 링크가 전부 사라진다. 아래 "다음 단계 후보"의 SQLite 전환 항목 참고.
 - 실행 예정 (Docker 설치된 환경에서): `docker compose up --build` → 프론트
   `http://localhost:5173`, 백엔드 `http://localhost:8000`.
-- 아직 안 한 것: 실제 빌드 검증, 프로덕션 시크릿 관리(지금은 `.env` 그대로 사용),
-  `GET /assessment/{id}`의 인메모리 저장소를 컨테이너 재시작에도 버티는 Redis/DB로
-  교체(멀티 워커 스케일 시에도 필요 — 위 `api.py` 인터페이스 계약 섹션의 경고 참고),
-  HTTPS/리버스프록시, 실제 클라우드/서버 배포 타깃 선정.
+- 아직 안 한 것: 실제 빌드 검증(이 항목이 여전히 최우선 — 위 두 버그 수정도 전부 정적
+  검토일 뿐 한 번도 실행해서 확인 못 함), 프로덕션 시크릿 관리(지금은 `.env` 그대로 사용),
+  여러 워커/여러 서버로 스케일할 때 SQLite → Redis 전환, HTTPS/리버스프록시,
+  실제 클라우드/서버 배포 타깃 선정.
+
+### VWorld 배포 서버 검증 체크리스트 (국내 리전 서버가 준비되면 바로 실행)
+
+이 개발 머신은 vworld.kr API 자체 접속이 막혀있어서(싱가포르 등 해외 IP 대역을 vworld가
+차단하는 것으로 추정 — 502/커넥션 타임아웃 패턴), 로컬에서는 브라우저로 대신 열어보는
+우회로만 검증했다(위 "VWorld 공시가격 연동" 섹션 참고). 실제 배포 서버(서울 리전 등
+국내 IP)가 준비되면 이 순서로 확인할 것:
+
+1. **서버 리전 확인** — 클라우드 인스턴스가 국내 리전(예: AWS `ap-northeast-2`)인지 먼저
+   확인. 해외 리전이면 이 문제 자체가 재현된다.
+2. **`debug_vworld_call.py` 단독 실행** — `.env`에 `VWORLD_API_KEY`/`VWORLD_DOMAIN` 설정
+   후 `python debug_vworld_call.py`. 국내 리전인데도 502/타임아웃이면, vworld 마이페이지에
+   등록한 "사용 도메인"이 실제 운영 도메인과 다른 게 원인일 가능성이 높음(`domain=localhost`
+   로 발급받았다면 재발급 필요).
+3. **엔드투엔드 폴백 검증** — 실거래 이력이 없을 법한 매물(신축, 또는 `property_type`이
+   `apartment`가 아닌 경우)로 `POST /assessment`를 호출해 `marketPriceConfidence`가
+   `"estimated_from_public_price"`로 뒤집히며 VWorld 공시가격 기반 시세가 정상 산출되는지
+   확인. `test_full_assessment.py::TestMarketPriceConfidenceWiring`이 이 경로를 모킹으로
+   이미 검증해뒀으므로, 여기서는 "진짜 네트워크로도 똑같이 동작하는지"만 확인하면 됨.
+4. 위 1~3이 전부 통과하면 이 체크리스트와 "다음 단계 후보"의 관련 항목을 완료 처리할 것.
 
 ## VWorld 공시가격 연동 (2026-09-14 준비 → 2026-09-15 검증 완료)
 
@@ -429,8 +463,8 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       XML 파싱으로 재작성, 실제 성공 응답으로 검증 완료 (2026-09-15, 지인 브라우저 경유) —
       위 "VWorld 공시가격 연동" 섹션 참고. `property_aggregator.py` 통합도 이미 돼 있어
       추가 배선 작업 없이 바로 동작.
-- [ ] 이 머신 자체의 vworld API 직접 접속 문제는 미해결 — 배포 서버(국내 리전)에서
-      `POST /assessment`로 `estimated_from_public_price` 케이스까지 엔드투엔드 재검증 필요.
+- [ ] 이 머신 자체의 vworld API 직접 접속 문제는 미해결 — 배포 서버(국내 리전) 준비되면
+      위 "VWorld 배포 서버 검증 체크리스트" 섹션 순서대로 진행할 것.
 - [x] 대항력 공백 위험(①) + 확정일자 미확보 위험(②) 룰 엔진 추가 — `tenancy_safety_rules.py`에
       `check_possession_priority_gap_risk`/`check_fixed_date_risk` 신설,
       `registry_summary_parser.py`가 각 권리의 `receivedDate`(접수일)까지 추출하도록 확장,
@@ -461,13 +495,50 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
       해당 유형도 실거래 기반 "high" confidence를 받을 수 있음 — 지금은 공시가격
       폴백(있으면) 또는 unavailable까지만 나온다. 백엔드 테스트 204→208개 전부 통과,
       실제 서버로 야탑동 335 다세대/아파트 두 property_type 모두 curl 재검증 완료.
-- [ ] 연립다세대/오피스텔 전용 국토부 실거래가 API 연동 (위 버그 수정으로 일단 안전하게
-      unavailable/공시가격 폴백 처리는 되지만, 빌라/다세대도 실거래 기반 정확한 시세를
-      받으려면 필요 — RTMSDataSvcRHTrade 등 별도 엔드포인트 조사 필요)
-- [ ] 실제 서버/클라우드에 배포 (배포 타깃 미정)
+- [x] 연립다세대/오피스텔 전용 국토부 실거래가 API 연동 — `real_transaction_price_adapter.py`에
+      `fetch_villa_trades`(RTMSDataSvcRHTrade)/`fetch_officetel_trades`(RTMSDataSvcOffiTrade)
+      추가, `property_aggregator.py`가 property_type별로 올바른 엔드포인트를 골라 쓰도록
+      배선(`_trade_fetch_fn_for()`). ⚠️ 아직 우리 MOLIT_SERVICE_KEY로 직접 검증하지는
+      않았다 — 세션 중 태그명 관련 정보가 엇갈려서(한글 태그 주장 vs 영문 태그 주장) GitHub의
+      독립 오픈소스 MOLIT 클라이언트(tae0y/real-estate-mcp)를 찾아 대조했고, 정확히 같은
+      엔드포인트(Dev 접미사 없음)와 같은 영문 태그(mhouseNm/offiNm/dealAmount/excluUseAr/
+      umdNm/cdealType)를 쓰고 있어 지금 구현이 맞을 개연성이 높다고 보고 채택함 — 그래도
+      "실제 검증"은 아니므로 실키가 생기면 `debug_villa_officetel_call.py`부터 돌려서
+      확인할 것(스크립트 신규 작성 완료). 시세 계산 핵심 필드(dealAmount 등)는 세 API가
+      공통이라, 설령 "매물명" 태그가 틀려도 시세 계산 자체는 안 깨지는 구조.
+- [x] Docker 배포 인프라 고도화 — (1) `docker-compose.yml`에 `VWORLD_API_KEY`/
+      `VWORLD_DOMAIN` 환경변수가 아예 안 넘어가던 버그 발견/수정(로컬에서 검증해둔 VWorld
+      연동이 Docker 배포에서는 항상 꺼져있었을 것). (2) `POST /assessment`의 저장소를
+      인메모리 dict에서 SQLite(`assessment_store.py`, 표준 라이브러리 sqlite3만 사용, 신규
+      의존성 없음)로 전환 — 컨테이너 재시작/재배포마다 `/result/:id` 공유 링크가 전부
+      깨지던 문제 해결. `docker-compose.yml`에 `./data:/app/data` 볼륨 마운트 추가로
+      영속성 확보, `.gitignore`에 `data/`/`*.db` 추가. Redis는 여러 워커/여러 서버로
+      스케일할 때 옮길 다음 단계로 남겨둠(지금은 단일 워커 프로토타입이라 별도 서비스
+      운영 부담이 이득보다 큼). ⚠️ 이 머신엔 Docker가 없어 실제 빌드/컨테이너 재시작
+      시나리오 자체는 여전히 미검증 — 정적 코드 검토 + SQLite 유닛테스트로만 확인함.
+      (villa/officetel 연동 포함) 백엔드 테스트 204→227개 전부 통과.
+- [ ] 실제 서버/클라우드에 배포 (배포 타깃 미정) — 배포 시 위 Docker 볼륨/env 변경사항을
+      실제로 `docker compose up --build`까지 돌려서 최종 검증할 것.
 
 ---
-**최근 업데이트**: 2026-09-14 후속 세션(4) — 시세 추정이 property_type을 완전히 무시하던
+**최근 업데이트**: 2026-09-15 세션 — 세 갈래 작업. ① Docker 배포 정적 검토 중
+`docker-compose.yml`에 `VWORLD_API_KEY`/`VWORLD_DOMAIN`이 아예 안 넘어가던 버그(로컬
+검증된 VWorld 연동이 Docker 배포에서는 조용히 항상 꺼져있었을 것) 발견/수정, `POST
+/assessment` 저장소를 인메모리 dict에서 SQLite(`assessment_store.py`, 신규 의존성 없음)
+로 전환해 컨테이너 재배포에도 결과 링크가 살아남게 함 + `docker-compose.yml`에 데이터
+볼륨 추가. ② `real_transaction_price_adapter.py`에 연립다세대(RTMSDataSvcRHTrade)/
+오피스텔(RTMSDataSvcOffiTrade) 실거래가 API 연동 — 세션 중 태그명 정보가 엇갈려서(한글
+태그설 vs 영문 태그설) GitHub의 독립 오픈소스 MOLIT 클라이언트를 찾아 대조 검증하는
+과정을 거침(README "연립다세대/오피스텔..." 섹션 참고, 여전히 우리 실키로는 미검증).
+③ Step2Documents.jsx의 확정일자 안내 문구를 "계약 전엔 정상 vs 잔금까지 치렀다면 위험"
+두 시나리오로 명확히 구분하도록 개선, PossessionTimeline.jsx는 이미 각 이벤트에 "왜
+위험한지"(대항력 익일 0시 vs 저당권 당일 즉시) 설명이 붙어있음을 재확인. 날짜 포맷
+정합성(프론트 `YYYY-MM-DD` vs 등기부 `receivedDate`)은 `registry_summary_parser.py`가
+파싱 시점에 이미 ISO 형식으로 정규화해두므로 별도 변환 없이 안전함을 코드로 재확인.
+백엔드 테스트 204→227개 전부 통과, 프론트 lint/build 클린.
+
+---
+**이전 업데이트**: 2026-09-14 후속 세션(4) — 시세 추정이 property_type을 완전히 무시하던
 버그 수정. 실사용자가 54㎡ 다세대를 진단했는데 "추정 시세 14억 3,750만원"이 나왔지만
 실제 시세는 9~10억이라고 보고 → 원인 추적 결과 `real_transaction_price_adapter.py`가
 국토부 "아파트매매" 실거래만 조회하는데, `property_aggregator.get_property_info()`가

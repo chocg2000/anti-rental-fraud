@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import ScreenShell from '../components/ScreenShell'
 import Toast from '../components/Toast'
-import { IconAlertTriangle, IconUploadCloud, IconSpinner, IconCheckCircle } from '../components/icons'
+import { IconAlertTriangle, IconInfoCircle, IconUploadCloud, IconSpinner, IconCheckCircle } from '../components/icons'
 import { uploadRegistryPdf } from '../lib/api'
 
 const VIOLATION_OPTIONS = [
@@ -307,8 +307,14 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
           </div>
 
           {documents.fixedDateChoice === 'no' && (
-            <div className="text-xs leading-relaxed text-gray-400">
-              확정일자는 계약을 체결해야 받을 수 있어 계약 전이라면 없는 게 정상입니다 — 계약 체결 당일 바로 주민센터나 인터넷등기소에서 받으세요.
+            <div className="flex gap-2 rounded-lg bg-gray-50 p-2.5 text-xs leading-relaxed text-gray-500">
+              <IconInfoCircle size={14} className="mt-0.5 shrink-0 text-gray-400" />
+              <span>
+                아직 계약 전이신가요? 확정일자는 계약서 작성 후에만 받을 수 있으므로 지금
+                단계에서는 없는 게 정상입니다. 다만 이미 잔금까지 치르셨다면 이야기가 다릅니다
+                — 확정일자 없이는 우선변제권이 생기지 않으니, 계약 당일 바로 주민센터나
+                인터넷등기소에서 받으세요.
+              </span>
             </div>
           )}
         </div>

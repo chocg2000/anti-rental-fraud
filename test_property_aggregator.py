@@ -102,37 +102,62 @@ class TestGetPropertyInfo(unittest.TestCase):
         self.assertTrue(result["violationStatusConfirmed"])
         self.assertEqual(result["violationStatusRaw"], "위반")
 
-    @patch("property_aggregator.fetch_public_price")
     @patch("property_aggregator.fetch_building_register")
+    @patch("property_aggregator.fetch_villa_trades")
     @patch("property_aggregator.fetch_apt_trades")
     @patch("property_aggregator.resolve_address")
-    def test_villa_property_type_skips_apartment_trade_fetch(
-        self, mock_resolve, mock_trades, mock_building, mock_public_price
+    def test_villa_property_type_queries_rh_endpoint_not_apartment(
+        self, mock_resolve, mock_apt_trades, mock_villa_trades, mock_building
     ):
-        # 실제로 겪은 버그: 국토부 실거래가 API는 아파트매매만 지원하는데, 빌라/다세대에도
-        # 그대로 적용돼서 근처 아파트 가격(더 비쌈)이 빌라 시세인 것처럼 나왔었다.
-        # property_type="villa"면 애초에 아파트 실거래 조회 자체를 하면 안 된다.
+        # 실제로 겪은 버그: 예전엔 국토부 아파트매매 API만 있어서 빌라/다세대에도 그대로
+        # 적용돼 근처 아파트 가격(더 비쌈)이 빌라 시세인 것처럼 나왔다. 연립다세대 전용
+        # 엔드포인트(RHTrade)가 생겼으니, villa는 이제 그쪽으로만 조회해야 하고
+        # 아파트 엔드포인트는 절대 호출하면 안 된다.
         mock_resolve.return_value = FAKE_NORMALIZED
+        mock_villa_trades.side_effect = lambda lawd, ym: (
+            {"status": "ok", "data": [make_trade(65000, 54.0, 2024, 3)] * 3}
+            if ym == "202403" else {"status": "not_found"}
+        )
         mock_building.return_value = {"status": "not_found"}
-        mock_public_price.return_value = {"status": "error", "reason": "invalid_request"}
 
         result = get_property_info(
             "서울 강남구 테헤란로 427", target_area=54.0, as_of=date(2024, 4, 1), property_type="villa",
         )
 
-        mock_trades.assert_not_called()
-        self.assertEqual(result["sourceStatuses"]["transactionPrice"], "skipped")
-        self.assertIsNone(result["marketPrice"])
-        self.assertEqual(result["marketPriceConfidence"], "unavailable")
+        mock_apt_trades.assert_not_called()
+        mock_villa_trades.assert_called()
+        self.assertEqual(result["sourceStatuses"]["transactionPrice"], "ok")
+        self.assertEqual(result["marketPrice"], 65000)
 
     @patch("property_aggregator.fetch_public_price")
     @patch("property_aggregator.fetch_building_register")
-    @patch("property_aggregator.fetch_apt_trades")
+    @patch("property_aggregator.fetch_villa_trades")
     @patch("property_aggregator.resolve_address")
-    def test_villa_property_type_still_falls_back_to_public_price(
-        self, mock_resolve, mock_trades, mock_building, mock_public_price
+    def test_multi_household_also_routes_to_villa_endpoint(
+        self, mock_resolve, mock_villa_trades, mock_building, mock_public_price
+    ):
+        # "연립다세대" API 한 종류가 연립주택+다세대주택을 모두 커버하므로
+        # property_type="multi_household"도 villa와 같은 엔드포인트로 가야 한다.
+        mock_resolve.return_value = FAKE_NORMALIZED
+        mock_villa_trades.return_value = {"status": "not_found"}
+        mock_building.return_value = {"status": "not_found"}
+        mock_public_price.return_value = {"status": "error", "reason": "invalid_request"}
+
+        get_property_info(
+            "서울 강남구 테헤란로 427", target_area=39.6, as_of=date(2024, 4, 1), property_type="multi_household",
+        )
+
+        mock_villa_trades.assert_called()
+
+    @patch("property_aggregator.fetch_public_price")
+    @patch("property_aggregator.fetch_building_register")
+    @patch("property_aggregator.fetch_villa_trades")
+    @patch("property_aggregator.resolve_address")
+    def test_villa_property_type_still_falls_back_to_public_price_when_no_trades(
+        self, mock_resolve, mock_villa_trades, mock_building, mock_public_price
     ):
         mock_resolve.return_value = FAKE_NORMALIZED
+        mock_villa_trades.return_value = {"status": "not_found"}
         mock_building.return_value = {"status": "not_found"}
         mock_public_price.return_value = {"status": "ok", "data": {"publicPrice": 50_000}}
 
@@ -140,9 +165,52 @@ class TestGetPropertyInfo(unittest.TestCase):
             "서울 강남구 테헤란로 427", target_area=54.0, as_of=date(2024, 4, 1), property_type="villa",
         )
 
-        mock_trades.assert_not_called()
         self.assertEqual(result["marketPriceConfidence"], "estimated_from_public_price")
         self.assertEqual(result["marketPrice"], round(50_000 * 1.4))
+
+    @patch("property_aggregator.fetch_building_register")
+    @patch("property_aggregator.fetch_officetel_trades")
+    @patch("property_aggregator.resolve_address")
+    def test_officetel_property_type_queries_offi_endpoint(
+        self, mock_resolve, mock_offi_trades, mock_building
+    ):
+        mock_resolve.return_value = FAKE_NORMALIZED
+        mock_offi_trades.side_effect = lambda lawd, ym: (
+            {"status": "ok", "data": [make_trade(32000, 21.5, 2024, 3)] * 3}
+            if ym == "202403" else {"status": "not_found"}
+        )
+        mock_building.return_value = {"status": "not_found"}
+
+        result = get_property_info(
+            "서울 강남구 테헤란로 427", target_area=21.5, as_of=date(2024, 4, 1), property_type="officetel",
+        )
+
+        mock_offi_trades.assert_called()
+        self.assertEqual(result["marketPrice"], 32000)
+
+    @patch("property_aggregator.fetch_public_price")
+    @patch("property_aggregator.fetch_building_register")
+    @patch("property_aggregator.fetch_apt_trades")
+    @patch("property_aggregator.fetch_villa_trades")
+    @patch("property_aggregator.fetch_officetel_trades")
+    @patch("property_aggregator.resolve_address")
+    def test_unknown_property_type_skips_all_trade_fetches_defensively(
+        self, mock_resolve, mock_offi, mock_villa, mock_apt, mock_building, mock_public_price
+    ):
+        # 매핑에 없는 property_type이 어쩌다 들어와도(방어적) 어떤 실거래 엔드포인트도
+        # 잘못 호출하지 않고 안전하게 건너뛰어야 한다.
+        mock_resolve.return_value = FAKE_NORMALIZED
+        mock_building.return_value = {"status": "not_found"}
+        mock_public_price.return_value = {"status": "error", "reason": "invalid_request"}
+
+        result = get_property_info(
+            "서울 강남구 테헤란로 427", target_area=54.0, as_of=date(2024, 4, 1), property_type="단독주택",
+        )
+
+        mock_apt.assert_not_called()
+        mock_villa.assert_not_called()
+        mock_offi.assert_not_called()
+        self.assertEqual(result["sourceStatuses"]["transactionPrice"], "skipped")
 
     @patch("property_aggregator.fetch_building_register")
     @patch("property_aggregator.fetch_apt_trades")
