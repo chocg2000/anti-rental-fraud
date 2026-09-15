@@ -11,10 +11,22 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+import assessment_store
 from api import app
 from property_aggregator import PropertyAggregationError
 
 client = TestClient(app, raise_server_exceptions=False)
+
+
+def setUpModule():
+    # api.py가 이제 SQLite(assessment_store.py)로 결과를 저장한다 — 테스트 실행 중
+    # 실제 data/assessments.db 파일이 생기지 않도록 인메모리 DB로 격리한다.
+    assessment_store.DB_PATH = ":memory:"
+    assessment_store.reset_for_testing()
+
+
+def tearDownModule():
+    assessment_store.reset_for_testing()
 
 YATAP_REGISTRY_OCR_TEXT = """주요 등기사항 요약 (참고용)
 고유번호 1356-1996-092460

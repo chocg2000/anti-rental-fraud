@@ -12,12 +12,13 @@ API 레이어 (FastAPI) — README "다음 단계" 오케스트레이터 위 API
 파싱 결과 미리보기만 반환한다 — 최종 반영은 그 텍스트를 registry_ocr_text에 담아
 /assessment를 호출할 때 이뤄진다.
 
-POST /assessment는 계산한 결과를 메모리에 id로 저장해두고 GET /assessment/{id}로 다시
+POST /assessment는 계산한 결과를 id로 저장해두고 GET /assessment/{id}로 다시
 꺼내볼 수 있게 한다 — 프론트가 결과 화면을 /result/:id 같은 URL로 라우팅해서, 새로고침하거나
 링크를 공유해도 같은 결과를 다시 볼 수 있게 하기 위함이다(폼 입력 자체는 재현 대상이 아님).
-⚠️ 지금은 프로토타입 단계라 프로세스 메모리에만 저장한다 — 서버 재시작하면 전부 날아가고,
-여러 워커로 스케일하면 워커마다 따로 논다. 실사용 전에는 Redis/DB 같은 공유 저장소로
-바꿔야 한다.
+저장소는 assessment_store.py(SQLite)에 위임한다 — 예전엔 프로세스 메모리 dict에만 있어서
+서버 재시작마다 결과가 전부 날아갔는데, 지금은 파일 하나로 재시작에도 살아남는다. 다만
+아직은 단일 워커 전제다 — 여러 워커/여러 서버로 스케일하면 SQLite 파일 잠금 경합이 심해질
+수 있으니 그때는 Redis 같은 진짜 공유 저장소로 옮겨야 한다(assessment_store.py 참고).
 
 실행: uvicorn api:app --reload
 문서: http://127.0.0.1:8000/docs (Swagger UI 자동 생성)
@@ -42,13 +43,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from full_assessment import run_full_assessment
 from registry_summary_ocr import find_and_parse_summary_page
+from assessment_store import save_assessment, get_assessment as get_stored_assessment
 
 logger = logging.getLogger(__name__)
 
 MAX_REGISTRY_UPLOAD_BYTES = 15 * 1024 * 1024  # 스캔본 PDF 기준 여유있는 상한선
-
-# 프로토타입용 인메모리 결과 저장소 — 위 모듈 docstring의 경고 참고.
-_ASSESSMENT_STORE: dict[str, dict] = {}
 
 app = FastAPI(
     title="전세/월세 사기 방지 안전진단 API",
@@ -181,7 +180,7 @@ def create_assessment(payload: AssessmentRequest) -> dict:
 
     assessment_id = uuid.uuid4().hex
     result_with_id = {"id": assessment_id, **result}
-    _ASSESSMENT_STORE[assessment_id] = result_with_id
+    save_assessment(assessment_id, result_with_id)
     return result_with_id
 
 
@@ -190,9 +189,9 @@ def get_assessment(assessment_id: str) -> dict:
     """
     POST /assessment가 방금 만든 결과를 id로 다시 꺼내온다. 프론트가 결과 화면을
     /result/:id로 라우팅해서, 새로고침하거나 링크를 공유해도 같은 결과를 다시 볼 수 있게
-    하기 위함이다. 서버 재시작 시 사라지는 인메모리 저장소라는 점은 모듈 docstring 참고.
+    하기 위함이다. 저장소는 SQLite라 서버 재시작에도 살아남는다 — assessment_store.py 참고.
     """
-    result = _ASSESSMENT_STORE.get(assessment_id)
+    result = get_stored_assessment(assessment_id)
     if result is None:
         raise HTTPException(status_code=404, detail="해당 진단 결과를 찾을 수 없습니다 (만료되었거나 잘못된 링크일 수 있습니다).")
     return result

@@ -21,3 +21,7 @@ tools/
 
 # 실제 API 키가 포함된 임시 테스트 링크 파일
 vworld_test_link.txt
+
+# SQLite 진단 결과 저장소 (assessment_store.py) — 로컬/컨테이너 런타임 데이터, 소스 아님
+data/
+*.db

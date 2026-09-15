@@ -8,8 +8,17 @@ services:
       # .env 전체를 주입하는 게 아님 — 그래서 TESSERACT_CMD 같은 Windows 로컬 전용 경로가
       # 컨테이너 안으로 새어 들어가지 않는다. 컨테이너 안은 apt-get 설치본이 PATH에 있어서
       # 애초에 그 값들이 필요 없다).
+      # ⚠️ VWORLD_API_KEY/VWORLD_DOMAIN이 빠져있던 버그가 있었다 — public_price_adapter.py는
+      # 이 값이 없으면 조용히 "error"만 반환하므로(크래시 안 함), VWorld를 로컬에서 실제로
+      # 검증해놓고도 Docker 배포에서는 이 값이 안 넘어가서 항상 꺼져있는 상태였다.
       - KAKAO_REST_API_KEY=${KAKAO_REST_API_KEY}
       - MOLIT_SERVICE_KEY=${MOLIT_SERVICE_KEY}
+      - VWORLD_API_KEY=${VWORLD_API_KEY}
+      - VWORLD_DOMAIN=${VWORLD_DOMAIN}
+    volumes:
+      # assessment_store.py(SQLite)의 결과 DB — 이 볼륨이 없으면 컨테이너를 재생성할 때마다
+      # (재배포, docker compose down/up 등) 진단 결과와 공유 링크가 전부 사라진다.
+      - ./data:/app/data
 
   frontend:
     build: ./frontend
