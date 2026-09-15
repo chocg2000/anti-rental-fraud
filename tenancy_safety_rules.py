@@ -1,7 +1,7 @@
 """
 전세사기 방지 핵심 룰 (설계문서 3.1절 LTV + 3.3절 임대인 리스크 연장 + 대항력/우선변제권)
 ------------------------------------------------------------------------
-지금까지 만든 조각들을 실제 유저 판단에 쓰이는 네 가지 룰로 연결한다:
+지금까지 만든 조각들을 실제 유저 판단에 쓰이는 다섯 가지 룰로 연결한다:
 
 룰 1. 보증금보다 우선하는 선순위 채권액 계산 (을구 기반, 깡통전세 위험)
 룰 2. 소유주 일치 여부 검증 (갑구 기반, 신탁/대리인/법인 사기 방지)
@@ -15,11 +15,10 @@
   채권이 포함되긴 하지만, "왜 위험한지"에 대한 설명은 안 해준다).
 룰 4. 확정일자 미부여 위험 (주택임대차보호법 제3조의2)
   대항력이 있어도 확정일자가 없으면 경매 시 우선변제권(배당요구권) 자체가 발생하지 않는다.
-
-⚠️ 여기 포함 안 된 것: 최우선변제금(소액임차인 보호) 계산. 지역×시점별 정확한 법정
-금액 테이블(여러 차례 개정됨, 기준일도 계약일이 아니라 등기부상 "가장 오래된 근저당권
-설정일")이 필요한데, 확인 안 된 숫자를 채워넣으면 "보호받는다"는 거짓 안심을 줄 위험이
-있어 의도적으로 미룬다 — 국가법령정보센터 등에서 정확한 표를 확보한 뒤 별도 진행할 것.
+룰 5. 최우선변제금(소액임차인 보호, 주택임대차보호법 제8조) — 2026-09-15 확보한 검증된
+  현행(2023-02-21 시행) 테이블 범위로 한정해 구현. 기준일이 그 이전이거나 지역 판정이
+  불가능한 경우는 의도적으로 "unknown"을 반환한다 — 자세한 범위 제한 사유는
+  check_minimum_priority_repayment() docstring 참고.
 """
 
 from datetime import date as date_cls
@@ -278,6 +277,142 @@ def check_fixed_date_risk(has_fixed_date: bool | None) -> dict:
     }
 
 
+# 2026-09-15 세 개 독립 출처(국가법령정보센터 시행령, 법제처 찾기쉬운 생활법령정보,
+# 부동산케이스노트 개정연혁 정리)로 교차 확인한 현행(2023-02-21 시행) 최우선변제금 테이블.
+# 이 시행령은 여러 차례(1984, 1987, 1990, 1995, 2001, 2008, 2010, 2014, 2016, 2018,
+# 2021, 2023) 개정됐는데, 이 중 지금 확보/검증한 건 가장 최근 구간 하나뿐이다 — 그
+# 이전 기준일은 check_minimum_priority_repayment()가 의도적으로 "unknown"을 반환한다.
+_PRIORITY_TABLE_EFFECTIVE_DATE = date_cls(2023, 2, 21)
+_PRIORITY_REPAYMENT_TABLE = {
+    "seoul": {"maxDeposit": 165_000_000, "claimAmount": 55_000_000},
+    "overcrowded": {"maxDeposit": 145_000_000, "claimAmount": 48_000_000},
+    "metropolitan": {"maxDeposit": 85_000_000, "claimAmount": 28_000_000},
+    "other": {"maxDeposit": 75_000_000, "claimAmount": 25_000_000},
+}
+
+
+def _earliest_secured_right_date(active_rights: list[dict]) -> date_cls | None:
+    """active_rights 중 receivedDate가 유효한 것들만 골라 가장 오래된 날짜를 찾는다."""
+    dates = []
+    for r in active_rights:
+        raw = r.get("receivedDate")
+        if not raw:
+            continue
+        try:
+            dates.append(date_cls.fromisoformat(raw))
+        except (ValueError, TypeError):
+            continue
+    return min(dates) if dates else None
+
+
+def check_minimum_priority_repayment(
+    my_deposit: int,
+    market_price: int | None,
+    active_rights: list[dict],
+    region: str | None,
+    as_of: date_cls | None = None,
+) -> dict:
+    """
+    룰 5: 최우선변제금(소액임차인 보호, 주택임대차보호법 제8조).
+
+    다른 룰들과 성격이 다르다 — 이건 "위험 신호"가 아니라 "안전망 안내"다. 그래서
+    overall_safety_assessment.py의 등급 산정에는 관여하지 않는다(safe/eligible이어도
+    등급을 낮추지 않고, not_eligible/unknown이어도 등급을 올리지 않는다) — 단지
+    "이 정도는 최우선으로 보장받는다"는 참고 정보를 결과 화면에 보여주기 위한 룰이다.
+
+    기준일(基準日)은 계약일이나 진단일이 아니라 "등기부상 가장 오래된 선순위 담보물권의
+    접수일"이다 — 선순위 권리자가 사후 법 개정으로 불이익을 받지 않도록 하기 위한 법리다.
+    담보물권이 하나도 없으면 진단 시점(as_of)을 기준일로 쓴다(보호할 기존 담보권이
+    없으므로 현재 시행 중인 법을 적용하는 게 타당하다).
+
+    ⚠️ 의도적으로 좁힌 범위 (모듈 docstring의 "여기 포함 안 된 것" 참고했던 기존 보류를
+    부분적으로만 해제):
+      1. 기준일이 2023-02-21보다 이르면 status="unknown" — 그 이전 개정 이력(최소
+         7차례)의 정확한 금액 테이블을 아직 확보/검증하지 못했다. 확인 안 된 옛날
+         금액을 채워넣느니 "모른다"가 낫다.
+      2. region이 None(priority_region_classifier.classify_priority_region()이
+         판정 불가라고 한 경우 — 시/군 일부 동만 걸치는 지역)이면 status="unknown".
+      3. market_price가 없으면 "최우선변제금은 주택가액의 2분의 1을 넘을 수 없다"는
+         법정 상한을 적용할 수 없어 status="unknown".
+
+    Args:
+        my_deposit: 내 보증금 (원 단위)
+        market_price: 시세 (원 단위 — 다른 룰들과 동일하게 이미 만원→원 변환된 값)
+        active_rights: RegistrySummaryParser의 activeRights (receivedDate 필요)
+        region: priority_region_classifier.classify_priority_region()의 반환값
+        as_of: 진단 기준일 (기본값: 오늘)
+    """
+    if as_of is None:
+        as_of = date_cls.today()
+
+    reference_date = _earliest_secured_right_date(active_rights) or as_of
+
+    if reference_date < _PRIORITY_TABLE_EFFECTIVE_DATE:
+        return {
+            "status": "unknown",
+            "reason": (
+                f"선순위 담보물권 설정일({reference_date.isoformat()})이 현재 확보한 "
+                "최우선변제금 기준표(2023-02-21 시행)보다 오래돼 정확한 금액을 계산할 "
+                "수 없습니다 — 확인 안 된 과거 금액을 추정하지 않습니다."
+            ),
+        }
+
+    if region is None:
+        return {
+            "status": "unknown",
+            "reason": (
+                "매물 소재지가 시/군 일부 동에 따라 최우선변제금 지역 등급이 갈리는 "
+                "지역이라 주소만으로는 정확히 판정할 수 없습니다."
+            ),
+        }
+
+    if market_price is None:
+        return {
+            "status": "unknown",
+            "reason": (
+                "시세 데이터가 없어 '최우선변제금은 주택가액의 2분의 1을 넘을 수 없다'는 "
+                "법정 상한을 적용할 수 없습니다."
+            ),
+        }
+
+    table = _PRIORITY_REPAYMENT_TABLE[region]
+
+    if my_deposit > table["maxDeposit"]:
+        return {
+            "status": "not_eligible",
+            "eligible": False,
+            "regionTier": region,
+            "maxDeposit": table["maxDeposit"],
+            "referenceDate": reference_date.isoformat(),
+            "reason": (
+                f"내 보증금({my_deposit:,}원)이 이 지역의 소액임차인 기준"
+                f"({table['maxDeposit']:,}원)을 초과해 최우선변제 대상이 아닙니다."
+            ),
+        }
+
+    guaranteed = min(table["claimAmount"], market_price // 2)
+    capped_by_half = guaranteed < table["claimAmount"]
+
+    reason = (
+        f"소액임차인에 해당해(보증금 {my_deposit:,}원 ≤ 기준 {table['maxDeposit']:,}원), "
+        f"매물이 경매로 넘어가도 최우선으로 {guaranteed:,}원을 돌려받을 수 있습니다"
+    )
+    if capped_by_half:
+        reason += f" (법정 한도는 {table['claimAmount']:,}원이지만 주택가액의 2분의 1인 {guaranteed:,}원으로 제한됨)"
+    reason += "."
+
+    return {
+        "status": "ok",
+        "eligible": True,
+        "regionTier": region,
+        "maxDeposit": table["maxDeposit"],
+        "guaranteedAmount": guaranteed,
+        "cappedByHalfOfPropertyValue": capped_by_half,
+        "referenceDate": reference_date.isoformat(),
+        "reason": reason,
+    }
+
+
 def evaluate_tenancy_safety(
     market_price: int | None,
     senior_secured_amount: int,
@@ -289,18 +424,24 @@ def evaluate_tenancy_safety(
     move_in_date: str | None = None,
     active_rights: list[dict] | None = None,
     has_fixed_date: bool | None = None,
+    region: str | None = None,
+    as_of: date_cls | None = None,
 ) -> dict:
-    """룰 1~4를 합쳐서 한 번에 결과를 낸다."""
+    """룰 1~5를 합쳐서 한 번에 결과를 낸다."""
     deposit_risk = check_deposit_priority_risk(
         market_price, senior_secured_amount, my_deposit, property_type, market_price_confidence
     )
     identity_check = check_landlord_identity_match(contract_landlord_name, registry_owners)
     possession_gap_risk = check_possession_priority_gap_risk(move_in_date, active_rights or [])
     fixed_date_risk = check_fixed_date_risk(has_fixed_date)
+    priority_repayment = check_minimum_priority_repayment(
+        my_deposit, market_price, active_rights or [], region, as_of=as_of
+    )
 
     return {
         "depositPriorityRisk": deposit_risk,
         "landlordIdentityCheck": identity_check,
         "possessionPriorityGapRisk": possession_gap_risk,
         "fixedDateRisk": fixed_date_risk,
+        "minimumPriorityRepayment": priority_repayment,
     }

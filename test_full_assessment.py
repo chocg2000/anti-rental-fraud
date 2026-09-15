@@ -371,6 +371,61 @@ class TestPossessionGapAndFixedDateWiring(unittest.TestCase):
         self.assertEqual(result["overallGrade"], "safe")
 
 
+class TestMinimumPriorityRepaymentWiring(unittest.TestCase):
+    """
+    priority_region_classifier.classify_priority_region()이 property_info의 주소로
+    호출돼 tenancy_safety_rules.check_minimum_priority_repayment()까지 이어지는지 검증.
+    """
+
+    @patch("full_assessment.get_property_info")
+    def test_seoul_address_computes_guaranteed_amount(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=1_000_000)  # 100억원 상당
+        mock_get_info.return_value["normalizedAddress"] = {"roadAddress": "서울특별시 강남구 테헤란로 427"}
+
+        result = run_full_assessment(
+            address="서울특별시 강남구 테헤란로 427",
+            target_area=84.99,
+            my_deposit=100_000_000,
+            contract_landlord_name="홍길동",
+        )
+
+        repayment = result["tenancySafety"]["minimumPriorityRepayment"]
+        self.assertEqual(repayment["status"], "ok")
+        self.assertEqual(repayment["guaranteedAmount"], 55_000_000)
+
+    @patch("full_assessment.get_property_info")
+    def test_ambiguous_region_address_is_unknown(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+        mock_get_info.return_value["normalizedAddress"] = {"roadAddress": "경기도 남양주시 호평동 1"}
+
+        result = run_full_assessment(
+            address="경기도 남양주시 호평동 1",
+            target_area=84.99,
+            my_deposit=100_000_000,
+            contract_landlord_name="홍길동",
+        )
+
+        repayment = result["tenancySafety"]["minimumPriorityRepayment"]
+        self.assertEqual(repayment["status"], "unknown")
+
+    @patch("full_assessment.get_property_info")
+    def test_uses_registry_active_rights_as_reference_date(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=1_000_000)
+        mock_get_info.return_value["normalizedAddress"] = {"roadAddress": "서울특별시 강남구 1"}
+
+        result = run_full_assessment(
+            address="서울특별시 강남구 1",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,  # 전세권 접수일 2025-03-26
+        )
+
+        repayment = result["tenancySafety"]["minimumPriorityRepayment"]
+        self.assertEqual(repayment["referenceDate"], "2025-03-26")
+
+
 class TestRegistryCriticalKeywordsWiring(unittest.TestCase):
 
     @patch("full_assessment.get_property_info")

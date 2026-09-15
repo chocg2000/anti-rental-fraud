@@ -3,7 +3,7 @@ import ScreenShell from '../components/ScreenShell'
 import { GradeIcon, IconChevronDown } from '../components/icons'
 import PossessionTimeline from '../components/PossessionTimeline'
 import { GRADE_META, RISK_BADGE, RISK_LABEL } from '../lib/grade'
-import { formatManwonAsKRW } from '../lib/format'
+import { formatManwonAsKRW, formatKRW } from '../lib/format'
 
 const CONFIDENCE_META = {
   high: { label: '신뢰도 높음', className: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -50,6 +50,7 @@ export default function Step3Result({ result, onRestart }) {
   const identity = result.tenancySafety?.landlordIdentityCheck
   const gapRisk = result.tenancySafety?.possessionPriorityGapRisk
   const fixedDate = result.tenancySafety?.fixedDateRisk
+  const priorityRepayment = result.tenancySafety?.minimumPriorityRepayment
   const fraud = result.fraudPatternResult
   const tax = result.taxClearanceResult
 
@@ -180,6 +181,30 @@ export default function Step3Result({ result, onRestart }) {
                 detail={fixedDate.reason}
                 expanded={!!expanded.fixedDate}
                 onToggle={() => toggle('fixedDate')}
+              />
+            )}
+
+            {priorityRepayment && (
+              <Card
+                title="최우선변제금 (소액임차인 보호)"
+                badgeLabel={
+                  priorityRepayment.status === 'ok' ? '보호됨'
+                  : priorityRepayment.status === 'not_eligible' ? '해당 없음'
+                  : '확인 불가'
+                }
+                badgeClass={
+                  priorityRepayment.status === 'ok' ? RISK_BADGE.safe
+                  : priorityRepayment.status === 'not_eligible' ? RISK_BADGE.unknown
+                  : RISK_BADGE.unknown
+                }
+                summary={
+                  priorityRepayment.status === 'ok'
+                    ? `경매로 넘어가도 최우선 ${formatKRW(priorityRepayment.guaranteedAmount)} 보장`
+                    : priorityRepayment.reason
+                }
+                detail={priorityRepayment.reason}
+                expanded={!!expanded.priorityRepayment}
+                onToggle={() => toggle('priorityRepayment')}
               />
             )}
 

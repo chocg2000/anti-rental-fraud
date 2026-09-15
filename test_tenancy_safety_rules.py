@@ -3,12 +3,14 @@ tenancy_safety_rules 단위 테스트
 """
 
 import unittest
+from datetime import date
 
 from tenancy_safety_rules import (
     check_deposit_priority_risk,
     check_fixed_date_risk,
     check_landlord_identity_match,
     check_possession_priority_gap_risk,
+    check_minimum_priority_repayment,
     evaluate_tenancy_safety,
 )
 
@@ -260,6 +262,128 @@ class TestFixedDateRisk(unittest.TestCase):
         self.assertIn("계약 전이라면 정상", result["reason"])
 
 
+class TestMinimumPriorityRepayment(unittest.TestCase):
+    """
+    룰 5 경계값 테스트 — 기준일(가장 오래된 선순위 담보물권 접수일) 경계, 지역 미판정,
+    소액임차인 한도 경계, 주택가액 1/2 상한을 집중적으로 검증한다.
+    """
+
+    def test_reference_date_exactly_on_effective_date_is_calculated(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000,
+            market_price=1_000_000_000,
+            active_rights=[right(received_date="2023-02-21")],
+            region="seoul",
+        )
+        self.assertEqual(result["status"], "ok")
+
+    def test_reference_date_one_day_before_effective_date_is_unknown(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000,
+            market_price=1_000_000_000,
+            active_rights=[right(received_date="2023-02-20")],
+            region="seoul",
+        )
+        self.assertEqual(result["status"], "unknown")
+
+    def test_uses_earliest_of_multiple_secured_rights(self):
+        rights = [
+            right(received_date="2024-01-01"),
+            right(received_date="2023-02-21"),  # 가장 오래됨 — 이게 기준일이 돼야 함
+            right(received_date="2025-01-01"),
+        ]
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=1_000_000_000, active_rights=rights, region="seoul",
+        )
+        self.assertEqual(result["referenceDate"], "2023-02-21")
+
+    def test_no_secured_rights_uses_as_of_date(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=1_000_000_000, active_rights=[],
+            region="seoul", as_of=date(2026, 9, 15),
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["referenceDate"], "2026-09-15")
+
+    def test_no_secured_rights_with_old_as_of_is_unknown(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=1_000_000_000, active_rights=[],
+            region="seoul", as_of=date(2020, 1, 1),
+        )
+        self.assertEqual(result["status"], "unknown")
+
+    def test_right_missing_received_date_ignored_falls_back_to_as_of(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=1_000_000_000,
+            active_rights=[right(received_date=None)], region="seoul", as_of=date(2026, 9, 15),
+        )
+        self.assertEqual(result["referenceDate"], "2026-09-15")
+
+    def test_region_none_is_unknown(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=1_000_000_000, active_rights=[], region=None,
+        )
+        self.assertEqual(result["status"], "unknown")
+        self.assertIn("지역", result["reason"])
+
+    def test_market_price_none_is_unknown(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=None, active_rights=[], region="seoul",
+        )
+        self.assertEqual(result["status"], "unknown")
+        self.assertIn("주택가액", result["reason"])
+
+    def test_deposit_exactly_at_seoul_max_is_eligible(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=165_000_000, market_price=2_000_000_000, active_rights=[], region="seoul",
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["eligible"])
+
+    def test_deposit_one_won_over_seoul_max_is_not_eligible(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=165_000_001, market_price=2_000_000_000, active_rights=[], region="seoul",
+        )
+        self.assertEqual(result["status"], "not_eligible")
+        self.assertFalse(result["eligible"])
+
+    def test_seoul_eligible_returns_correct_guaranteed_amount(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=2_000_000_000, active_rights=[], region="seoul",
+        )
+        self.assertEqual(result["guaranteedAmount"], 55_000_000)
+        self.assertFalse(result["cappedByHalfOfPropertyValue"])
+
+    def test_overcrowded_region_uses_correct_table_row(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=2_000_000_000, active_rights=[], region="overcrowded",
+        )
+        self.assertEqual(result["maxDeposit"], 145_000_000)
+        self.assertEqual(result["guaranteedAmount"], 48_000_000)
+
+    def test_metropolitan_region_uses_correct_table_row(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=50_000_000, market_price=2_000_000_000, active_rights=[], region="metropolitan",
+        )
+        self.assertEqual(result["maxDeposit"], 85_000_000)
+        self.assertEqual(result["guaranteedAmount"], 28_000_000)
+
+    def test_other_region_uses_correct_table_row(self):
+        result = check_minimum_priority_repayment(
+            my_deposit=50_000_000, market_price=2_000_000_000, active_rights=[], region="other",
+        )
+        self.assertEqual(result["maxDeposit"], 75_000_000)
+        self.assertEqual(result["guaranteedAmount"], 25_000_000)
+
+    def test_guaranteed_amount_capped_by_half_of_low_market_price(self):
+        # 서울 법정 한도는 5,500만원인데 시세가 8,000만원이면 절반(4,000만원)으로 제한
+        result = check_minimum_priority_repayment(
+            my_deposit=100_000_000, market_price=80_000_000, active_rights=[], region="seoul",
+        )
+        self.assertEqual(result["guaranteedAmount"], 40_000_000)
+        self.assertTrue(result["cappedByHalfOfPropertyValue"])
+
+
 class TestEvaluateTenancySafetyIntegration(unittest.TestCase):
 
     def test_real_document_scenario(self):
@@ -301,6 +425,20 @@ class TestEvaluateTenancySafetyIntegration(unittest.TestCase):
         )
         self.assertIsNone(result["possessionPriorityGapRisk"]["gapRiskDetected"])
         self.assertEqual(result["fixedDateRisk"]["riskLevel"], "unknown")
+        self.assertEqual(result["minimumPriorityRepayment"]["status"], "unknown")
+
+    def test_minimum_priority_repayment_wired_through(self):
+        result = evaluate_tenancy_safety(
+            market_price=600_000_000,
+            senior_secured_amount=300_000_000,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            registry_owners=[{"ownerName": "조춘근", "shareType": "단독소유"}],
+            property_type="multi_household",
+            region="seoul",
+        )
+        self.assertEqual(result["minimumPriorityRepayment"]["status"], "ok")
+        self.assertEqual(result["minimumPriorityRepayment"]["guaranteedAmount"], 55_000_000)
 
     def test_possession_gap_and_fixed_date_wired_through(self):
         result = evaluate_tenancy_safety(

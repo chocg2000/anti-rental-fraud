@@ -32,7 +32,9 @@ from tenancy_safety_rules import (
     check_landlord_identity_match,
     check_possession_priority_gap_risk,
     check_fixed_date_risk,
+    check_minimum_priority_repayment,
 )
+from priority_region_classifier import classify_priority_region
 from fraud_pattern_rules import detect_new_villa_recent_ownership_change
 from tax_clearance_check import check_tax_clearance_certificate
 from overall_safety_assessment import assess_overall_safety
@@ -91,7 +93,9 @@ def run_full_assessment(
             "overallGrade": "safe" | "caution" | "warning" | "danger" | "error",
             "reasons": [...],
             "propertyInfo": get_property_info() 결과 그대로 | None,
-            "tenancySafety": {"depositPriorityRisk": ..., "landlordIdentityCheck": ...} | None,
+            "tenancySafety": {"depositPriorityRisk": ..., "landlordIdentityCheck": ...,
+                              "possessionPriorityGapRisk": ..., "fixedDateRisk": ...,
+                              "minimumPriorityRepayment": ...} | None,
             "fraudPatternResult": ... | None,
             "taxClearanceResult": ... | None,
         }
@@ -146,11 +150,21 @@ def run_full_assessment(
     identity_check = check_landlord_identity_match(contract_landlord_name, registry_owners)
     possession_gap_risk = check_possession_priority_gap_risk(move_in_date, active_rights)
     fixed_date_risk = check_fixed_date_risk(has_fixed_date)
+
+    normalized_address = property_info.get("normalizedAddress") or {}
+    priority_region = classify_priority_region(
+        normalized_address.get("roadAddress") or normalized_address.get("jibunAddress")
+    )
+    priority_repayment = check_minimum_priority_repayment(
+        my_deposit, market_price_won, active_rights, priority_region, as_of=as_of
+    )
+
     tenancy_safety = {
         "depositPriorityRisk": deposit_risk,
         "landlordIdentityCheck": identity_check,
         "possessionPriorityGapRisk": possession_gap_risk,
         "fixedDateRisk": fixed_date_risk,
+        "minimumPriorityRepayment": priority_repayment,
     }
 
     fraud_pattern_result = None
