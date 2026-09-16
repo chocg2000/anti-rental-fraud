@@ -50,6 +50,9 @@ def extract_ownership_history_from_pdf(pdf_path: str, exclude_pages: set[int] | 
             "ownershipHistory": [{"date": "YYYY-MM-DD" | None, "ownerName": str}, ...],
             "eulguCriticalKeywords": [str, ...],  # 현재는 "임차권등기명령" 하나뿐
             "eulguSeniorMortgageAmount": int,  # 말소분 제외, 공동담보 중복제거된 근저당 총액(원)
+            "eulguHasUnparsedMortgageAmount": bool,  # 말소 안 된 근저당인데 금액을 못 읽은 게
+                # 있다는 뜻(예: "금일천오백육십만원정" 같은 한글 숫자 표기) — True면
+                # eulguSeniorMortgageAmount가 실제보다 적을 수 있다(registry_parser.parse_eulgu 참고).
             "pagesProcessed": int,   # 클로바 OCR 호출에 성공한 페이지 수
             "pagesFailed": [int, ...],  # 호출은 됐지만 실패했거나 렌더링 자체가 안 된 페이지 번호
         }
@@ -59,6 +62,7 @@ def extract_ownership_history_from_pdf(pdf_path: str, exclude_pages: set[int] | 
             "ownershipHistory": [],
             "eulguCriticalKeywords": [],
             "eulguSeniorMortgageAmount": 0,
+            "eulguHasUnparsedMortgageAmount": False,
             "pagesProcessed": 0,
             "pagesFailed": [],
         }
@@ -94,6 +98,7 @@ def extract_ownership_history_from_pdf(pdf_path: str, exclude_pages: set[int] | 
         "ownershipHistory": ownership_history,
         "eulguCriticalKeywords": eulgu_result["criticalKeywords"],
         "eulguSeniorMortgageAmount": eulgu_result["seniorMortgageAmount"],
+        "eulguHasUnparsedMortgageAmount": eulgu_result["hasUnparsedMortgageAmount"],
         "pagesProcessed": pages_processed,
         "pagesFailed": pages_failed,
     }

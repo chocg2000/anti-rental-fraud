@@ -55,6 +55,7 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
           ownershipHistory: result.ownershipHistory,
           eulguValidSecuredAmount: result.eulguValidSecuredAmount,
           hasRentRightCommand: result.hasRentRightCommand,
+          eulguHasUnparsedMortgageAmount: result.eulguHasUnparsedMortgageAmount,
         },
       }))
     } catch (err) {
@@ -250,6 +251,17 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
                   </span>
                   <span className="text-[12.5px] font-semibold text-gray-700">
                     {documents.registryPreview.eulguValidSecuredAmount.toLocaleString()}원
+                  </span>
+                </div>
+              )}
+
+              {documents.registryPreview.eulguHasUnparsedMortgageAmount && (
+                <div className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 p-2.5">
+                  <IconAlertTriangle size={15} className="mt-0.5 shrink-0 text-yellow-600" />
+                  <span className="text-[11.5px] leading-relaxed text-yellow-700">
+                    을구에 금액 형식을 인식하지 못한 근저당권이 있습니다 (오래된 등기의 한글
+                    숫자 표기 등) — 위 근저당 총액이 실제보다 적을 수 있으니 등기부 원본을
+                    직접 확인하세요.
                   </span>
                 </div>
               )}

@@ -110,6 +110,12 @@ class AssessmentRequest(BaseModel):
                     "합계와 교차검증해 더 큰 쪽을 채택한다(Max Fallback) — 요약 페이지가 "
                     "놓친 근저당이 있어도 위험을 과소평가하지 않기 위함이다.",
     )
+    eulgu_has_unparsed_mortgage_amount: bool = Field(
+        default=False,
+        description="을구 본문에 말소되지 않은 근저당권인데 채권최고액을 인식하지 못한 게 "
+                    "있는지(예: 오래된 등기의 한글 숫자 표기 '금일천오백육십만원정'). True면 "
+                    "eulgu_valid_secured_amount가 실제보다 적을 수 있다는 뜻이라 caution으로 반영된다.",
+    )
     has_rent_right_command: bool = Field(
         default=False,
         description="을구 본문에서 임차권등기명령이 하나라도 발견됐는지. True면 "
@@ -172,6 +178,12 @@ class RegistryUploadResponse(BaseModel):
                     "기본값)이면 항상 False — 그대로 /assessment의 has_rent_right_command로 "
                     "다시 보내면 즉시 danger로 강제된다.",
     )
+    eulguHasUnparsedMortgageAmount: bool = Field(
+        default=False,
+        description="을구 본문에 말소되지 않은 근저당권인데 채권최고액을 인식 못한 게 있는지. "
+                    "USE_CLOVA_OCR=false(B2C 기본값)이면 항상 False — 그대로 /assessment의 "
+                    "eulgu_has_unparsed_mortgage_amount로 다시 보내면 caution으로 반영된다.",
+    )
 
 
 @app.exception_handler(Exception)
@@ -222,6 +234,7 @@ def create_assessment(payload: AssessmentRequest) -> dict:
         ownership_history=ownership_history,
         registry_critical_keywords=registry_critical_keywords or None,
         eulgu_valid_secured_amount=payload.eulgu_valid_secured_amount,
+        eulgu_has_unparsed_mortgage_amount=payload.eulgu_has_unparsed_mortgage_amount,
         user_confirmed_violation_building=payload.user_confirmed_violation_building,
         move_in_date=payload.move_in_date,
         has_fixed_date=payload.has_fixed_date,
@@ -298,6 +311,7 @@ def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
                 "ownershipHistory": [],
                 "eulguCriticalKeywords": [],
                 "eulguSeniorMortgageAmount": 0,
+                "eulguHasUnparsedMortgageAmount": False,
                 "pagesProcessed": 0,
                 "pagesFailed": [],
             }
@@ -316,4 +330,5 @@ def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
         "ownershipHistory": gapgu_result["ownershipHistory"],
         "eulguValidSecuredAmount": gapgu_result["eulguSeniorMortgageAmount"],
         "hasRentRightCommand": "임차권등기명령" in gapgu_result["eulguCriticalKeywords"],
+        "eulguHasUnparsedMortgageAmount": gapgu_result["eulguHasUnparsedMortgageAmount"],
     }

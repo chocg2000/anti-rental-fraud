@@ -491,6 +491,48 @@ class TestEulguSecuredAmountCrossCheck(unittest.TestCase):
         self.assertTrue(deposit_risk["riskyDepositPriority"])
 
 
+class TestEulguUnparsedMortgageAmountWiring(unittest.TestCase):
+    """
+    2026-09-16 배선: 을구에 말소 안 된 근저당인데 금액 형식을 못 읽은 게 있으면(오래된
+    등기의 한글 숫자 표기 등) caution으로 반영되는지 확인한다. 안전한 시나리오
+    (TestMarketPriceUnitConversion 기준)에서도 이 신호가 안전 판정을 caution으로
+    끌어올리는지가 핵심 — "안전"으로 보여도 참고용 경고는 남아야 한다.
+    """
+
+    @patch("full_assessment.get_property_info")
+    def test_unparsed_amount_escalates_safe_case_to_caution(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+            eulgu_has_unparsed_mortgage_amount=True,
+        )
+
+        self.assertFalse(result["tenancySafety"]["depositPriorityRisk"]["riskyDepositPriority"])
+        self.assertEqual(result["overallGrade"], "caution")
+        self.assertTrue(any("금액 형식을 인식하지 못한" in r for r in result["reasons"]))
+
+    @patch("full_assessment.get_property_info")
+    def test_flag_omitted_does_not_affect_grade(self, mock_get_info):
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+        )
+
+        self.assertEqual(result["overallGrade"], "safe")
+
+
 class TestRegistryCriticalKeywordsWiring(unittest.TestCase):
 
     @patch("full_assessment.get_property_info")

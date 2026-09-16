@@ -85,6 +85,9 @@ function AppRoutes() {
     if (documents.registryPreview?.eulguValidSecuredAmount > 0) {
       payload.eulgu_valid_secured_amount = documents.registryPreview.eulguValidSecuredAmount
     }
+    if (documents.registryPreview?.eulguHasUnparsedMortgageAmount) {
+      payload.eulgu_has_unparsed_mortgage_amount = true
+    }
     if (documents.registryPreview?.hasRentRightCommand) {
       payload.has_rent_right_command = true
     }

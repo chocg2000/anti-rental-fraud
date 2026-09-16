@@ -113,6 +113,27 @@ class TestParseEulgu(unittest.TestCase):
         result = parse_eulgu(rows)
         self.assertEqual(result["seniorMortgageAmount"], 480_000_000)
         self.assertEqual(result["estimatedActualDebt"], round(480_000_000 / 1.2))
+        self.assertFalse(result["hasUnparsedMortgageAmount"])
+
+    def test_active_mortgage_with_korean_numeral_amount_flagged_not_dropped(self):
+        # 오래된 등기(1990년대)는 "금일천오백육십만원정"처럼 한글 숫자로 금액을 적어
+        # _AMOUNT_PATTERN(아라비아 숫자만 인식)이 못 읽는다. 말소되지 않은 근저당인데
+        # 조용히 무시하면 선순위채권 총액이 실제보다 적게 나오는 "거짓 안심"이 된다 —
+        # 최소한 놓쳤다는 사실은 hasUnparsedMortgageAmount로 표시해야 한다.
+        rows = [eul_row("1", "근저당권설정", detail="채권최고액 금일천오백육십만원정 채무자 소석두")]
+        result = parse_eulgu(rows)
+        self.assertEqual(result["seniorMortgageAmount"], 0)
+        self.assertTrue(result["hasUnparsedMortgageAmount"])
+
+    def test_cancelled_mortgage_with_korean_numeral_amount_not_flagged(self):
+        # 말소된 근저당이면 애초에 합산 대상이 아니므로, 금액을 못 읽어도 놓친 게 없다 —
+        # 불필요한 "확인 불가" 경고로 유저를 헷갈리게 하면 안 된다.
+        rows = [
+            eul_row("1", "근저당권설정", detail="채권최고액 금일천오백육십만원정"),
+            eul_row("2", "1번근저당권설정등기말소"),
+        ]
+        result = parse_eulgu(rows)
+        self.assertFalse(result["hasUnparsedMortgageAmount"])
 
     def test_cancelled_mortgage_excluded_from_sum(self):
         rows = [

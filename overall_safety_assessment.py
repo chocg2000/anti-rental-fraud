@@ -70,6 +70,16 @@ def assess_overall_safety(
             "— 참고용으로만 활용하세요."
         )
 
+    # 을구 본문에 말소 안 된 근저당인데 금액 형식을 못 읽은 게 있으면(예: 오래된 등기의
+    # 한글 숫자 표기), 방금 계산한 깡통전세 위험이 실제보다 낮게 나왔을 수 있다 —
+    # "안전"으로 보여도 참고용 경고를 반드시 남긴다.
+    if deposit_risk.get("hasUnparsedMortgageAmount"):
+        grade = _max_grade(grade, "caution")
+        reasons.append(
+            "을구에서 금액 형식을 인식하지 못한 근저당권이 있어 선순위채권 총액이 실제보다 "
+            "적게 계산됐을 수 있습니다 — 등기부 원본에서 직접 확인하세요."
+        )
+
     # 대항력 공백(잔금일 당일 접수된 권리) — 익일 0시에야 효력이 생기는 대항력보다
     # 먼저 선순위를 차지해버리는 전형적인 사기 타이밍이라 즉시 danger로 잡는다.
     gap_risk = tenancy_safety.get("possessionPriorityGapRisk", {})

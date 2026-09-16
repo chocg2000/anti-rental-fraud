@@ -142,11 +142,20 @@ def parse_eulgu(rows: list[dict]) -> dict:
     """
     을구 행 리스트에서 임차권등기명령 이력, 근저당권 채권최고액 합계(말소 제외,
     공동담보 중복합산 방지)를 뽑는다.
+
+    `_AMOUNT_PATTERN`은 "채권최고액 금115,200,000원"처럼 아라비아 숫자 표기만 인식한다.
+    오래된 등기(주로 1990년대)는 "금일천오백육십만원정"처럼 한글 숫자로 적혀 있어 금액을
+    아예 못 뽑는데, 이 경우 그 근저당을 조용히 무시하면(말소된 게 아니라 유효한 채로
+    남아있는데도) 선순위채권 총액이 실제보다 적게 계산되는 "거짓 안심"이 된다. 그래서
+    말소되지 않은 근저당인데 금액을 못 읽으면 `hasUnparsedMortgageAmount=True`로 표시해
+    상위(full_assessment.py/overall_safety_assessment.py)가 "확인 불가" 신호로 반영하게
+    한다 — 한글 숫자 파서를 새로 만드는 대신, 최소한 놓쳤다는 사실 자체는 숨기지 않는다.
     """
     canceled_ranks = _find_canceled_ranks(rows)
     keywords_found: list[str] = []
     amounts: list[int] = []
     joint_collateral_detected = False
+    has_unparsed_mortgage_amount = False
     seen_joint_amounts: set[int] = set()
 
     for row in rows:
@@ -172,6 +181,7 @@ def parse_eulgu(rows: list[dict]) -> dict:
         if "근저당권설정" in purpose and not is_canceled and not is_cancellation_entry:
             m = _AMOUNT_PATTERN.search(receipt_and_detail)
             if not m:
+                has_unparsed_mortgage_amount = True
                 continue
             amount = int(m.group(1).replace(",", ""))
 
@@ -189,6 +199,7 @@ def parse_eulgu(rows: list[dict]) -> dict:
         "seniorMortgageAmount": total,
         "estimatedActualDebt": round(total / _MORTGAGE_DEBT_RATIO) if total else 0,
         "jointCollateralDetected": joint_collateral_detected,
+        "hasUnparsedMortgageAmount": has_unparsed_mortgage_amount,
     }
 
 

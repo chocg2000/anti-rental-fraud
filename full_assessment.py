@@ -56,6 +56,7 @@ def run_full_assessment(
     ownership_history: list[dict] | None = None,
     registry_critical_keywords: list[str] | None = None,
     eulgu_valid_secured_amount: int | None = None,
+    eulgu_has_unparsed_mortgage_amount: bool = False,
     user_confirmed_violation_building: bool = False,
     move_in_date: str | None = None,
     has_fixed_date: bool | None = None,
@@ -87,6 +88,10 @@ def run_full_assessment(
             더 큰 쪽을 채택한다(Max Fallback) — 요약 페이지 OCR이 근저당 일부를 놓쳐도
             "위험을 과소평가하는" 방향으로는 절대 틀리지 않게 하기 위함이다. 요약 페이지가
             아예 없어도(registry_summary_text=None) 이 값만으로 깡통전세 위험을 계산한다.
+        eulgu_has_unparsed_mortgage_amount: registry_parser.parse_eulgu()가 말소 안 된
+            근저당권인데 채권최고액을 못 읽은 게 있다고 표시한 경우(선택 — 오래된 등기의
+            한글 숫자 표기 "금일천오백육십만원정" 등). True면 eulgu_valid_secured_amount가
+            실제보다 적을 수 있다는 뜻이라 caution으로 반영된다.
         user_confirmed_violation_building: 유저가 직접 확인한 위반건축물 여부.
             건축물대장 API는 이 정보를 제공하지 않으므로 반드시 유저 자가확인
             체크리스트에서 받아와야 한다. True면 최종 등급이 danger로 강제된다.
@@ -163,6 +168,12 @@ def run_full_assessment(
             market_price_won, senior_secured_amount, my_deposit, property_type,
             market_price_confidence=property_info["marketPriceConfidence"],
         )
+
+    # check_deposit_priority_risk()의 시그니처를 건드리지 않고, 계산이 끝난 결과에
+    # 이 신호만 얹는다 — user_confirmed_violation_building을 property_info에 직접
+    # 얹는 것과 같은 패턴(위 참고).
+    if eulgu_has_unparsed_mortgage_amount:
+        deposit_risk["hasUnparsedMortgageAmount"] = True
 
     identity_check = check_landlord_identity_match(contract_landlord_name, registry_owners)
     possession_gap_risk = check_possession_priority_gap_risk(move_in_date, active_rights)

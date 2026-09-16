@@ -177,6 +177,22 @@ class TestAssessmentEndpoint(unittest.TestCase):
         self.assertIn("임차권등기명령", reason)
 
     @patch("full_assessment.get_property_info")
+    def test_unparsed_mortgage_amount_flag_escalates_to_caution(self, mock_get_info):
+        # 을구 실키 배선(2026-09-16): 한글 숫자 금액표기처럼 인식 못한 근저당이 있다는
+        # 신호가 API 레이어까지 그대로 전달되는지 확인.
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+
+        response = client.post("/assessment", json=minimal_payload(
+            property_type="multi_household",
+            registry_ocr_text=YATAP_REGISTRY_OCR_TEXT,
+            eulgu_has_unparsed_mortgage_amount=True,
+        ))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["overallGrade"], "caution")
+
+    @patch("full_assessment.get_property_info")
     def test_landlord_mismatch_returns_danger(self, mock_get_info):
         mock_get_info.return_value = BASE_PROPERTY_INFO
 
@@ -322,6 +338,7 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
             "ownershipHistory": [{"date": "2015-07-29", "ownerName": "조춘근"}],
             "eulguCriticalKeywords": ["임차권등기명령"],
             "eulguSeniorMortgageAmount": 138_000_000,
+            "eulguHasUnparsedMortgageAmount": True,
             "pagesProcessed": 4,
             "pagesFailed": [],
         }
@@ -340,6 +357,7 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
         self.assertEqual(body["ownershipHistory"], [{"date": "2015-07-29", "ownerName": "조춘근"}])
         self.assertEqual(body["eulguValidSecuredAmount"], 138_000_000)
         self.assertTrue(body["hasRentRightCommand"])
+        self.assertTrue(body["eulguHasUnparsedMortgageAmount"])
 
         # 업로드된 내용이 임시 파일 경로로 그대로 전달됐는지만 확인 (내용 자체는 모킹 대상 밖)
         mock_find_and_parse.assert_called_once()
@@ -386,6 +404,7 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
             "ownershipHistory": [],
             "eulguCriticalKeywords": [],
             "eulguSeniorMortgageAmount": 0,
+            "eulguHasUnparsedMortgageAmount": False,
             "pagesProcessed": 0,
             "pagesFailed": [],
         }

@@ -63,6 +63,13 @@ LEASEHOLD_ORDER_FIELDS = [
     field("임차보증금", 320, 100), field("금50,000,000원", 420, 100),
 ]
 
+# 을구 근저당권설정 행인데 금액이 한글 숫자 표기라 _AMOUNT_PATTERN이 못 읽는 경우
+UNPARSEABLE_AMOUNT_MORTGAGE_FIELDS = [
+    field("1", 10, 100), field("근저당권설정", 40, 100),
+    field("1993년6월18일", 150, 100), field("제1호", 260, 100),
+    field("채권최고액", 320, 100), field("금일천오백육십만원정", 420, 100),
+]
+
 
 class TestExtractOwnershipHistoryFromPdf(unittest.TestCase):
 
@@ -88,6 +95,7 @@ class TestExtractOwnershipHistoryFromPdf(unittest.TestCase):
             "ownershipHistory": [],
             "eulguCriticalKeywords": [],
             "eulguSeniorMortgageAmount": 0,
+            "eulguHasUnparsedMortgageAmount": False,
             "pagesProcessed": 0,
             "pagesFailed": [],
         })
@@ -213,6 +221,20 @@ class TestExtractOwnershipHistoryFromPdf(unittest.TestCase):
         result = extract_ownership_history_from_pdf("fake.pdf")
 
         self.assertIn("임차권등기명령", result["eulguCriticalKeywords"])
+
+    @patch("registry_gapgu_ocr.fetch_ocr_result")
+    @patch("registry_gapgu_ocr.render_pdf_page_to_png_bytes")
+    @patch("registry_gapgu_ocr.pdf_page_count", return_value=1)
+    def test_korean_numeral_amount_flagged_as_unparsed_not_silently_dropped(
+        self, mock_page_count, mock_render, mock_fetch,
+    ):
+        mock_render.return_value = b"fake-png-bytes"
+        mock_fetch.return_value = clova_ok(UNPARSEABLE_AMOUNT_MORTGAGE_FIELDS)
+
+        result = extract_ownership_history_from_pdf("fake.pdf")
+
+        self.assertEqual(result["eulguSeniorMortgageAmount"], 0)
+        self.assertTrue(result["eulguHasUnparsedMortgageAmount"])
 
 
 if __name__ == "__main__":
