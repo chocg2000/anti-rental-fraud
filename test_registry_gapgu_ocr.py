@@ -49,6 +49,20 @@ TITLE_SECTION_NOISE_FIELDS = [
     field("경기도 성남시", 40, 30),
 ]
 
+# 을구 근저당권설정 행 — "1 근저당권설정 2020년1월1일 제1호 채권최고액 금100,000,000원"
+MORTGAGE_FIELDS = [
+    field("1", 10, 100), field("근저당권설정", 40, 100),
+    field("2020년1월1일", 150, 100), field("제1호", 260, 100),
+    field("채권최고액", 320, 100), field("금100,000,000원", 420, 100),
+]
+
+# 을구 임차권등기명령 행
+LEASEHOLD_ORDER_FIELDS = [
+    field("2", 10, 100), field("임차권등기명령", 40, 100),
+    field("2021년2월2일", 150, 100), field("제2호", 260, 100),
+    field("임차보증금", 320, 100), field("금50,000,000원", 420, 100),
+]
+
 
 class TestExtractOwnershipHistoryFromPdf(unittest.TestCase):
 
@@ -70,7 +84,13 @@ class TestExtractOwnershipHistoryFromPdf(unittest.TestCase):
             result = extract_ownership_history_from_pdf("fake.pdf")
 
         mock_page_count.assert_not_called()
-        self.assertEqual(result, {"ownershipHistory": [], "pagesProcessed": 0, "pagesFailed": []})
+        self.assertEqual(result, {
+            "ownershipHistory": [],
+            "eulguCriticalKeywords": [],
+            "eulguSeniorMortgageAmount": 0,
+            "pagesProcessed": 0,
+            "pagesFailed": [],
+        })
 
     @patch("registry_gapgu_ocr.fetch_ocr_result")
     @patch("registry_gapgu_ocr.render_pdf_page_to_png_bytes")
@@ -159,6 +179,40 @@ class TestExtractOwnershipHistoryFromPdf(unittest.TestCase):
         result = extract_ownership_history_from_pdf("fake.pdf")
 
         self.assertEqual(result["ownershipHistory"], [{"date": "1990-01-01", "ownerName": "김철수"}])
+
+    @patch("registry_gapgu_ocr.fetch_ocr_result")
+    @patch("registry_gapgu_ocr.render_pdf_page_to_png_bytes")
+    @patch("registry_gapgu_ocr.pdf_page_count", return_value=2)
+    def test_eulgu_results_extracted_alongside_ownership_history(
+        self, mock_page_count, mock_render, mock_fetch,
+    ):
+        # 갑구 페이지와 을구 페이지를 페이지별로 구분하지 않고 같은 파이프라인에 그대로
+        # 태워도 parse_gapgu()/parse_eulgu()가 각자 알아서 걸러내 양쪽 결과가 모두
+        # 정확히 나와야 한다 — 이게 이번 배선의 핵심 전제다.
+        mock_render.return_value = b"fake-png-bytes"
+        mock_fetch.side_effect = [
+            clova_ok(OWNERSHIP_PRESERVED_FIELDS),  # 페이지 1: 갑구
+            clova_ok(MORTGAGE_FIELDS),  # 페이지 2: 을구
+        ]
+
+        result = extract_ownership_history_from_pdf("fake.pdf")
+
+        self.assertEqual(result["ownershipHistory"], [{"date": "1990-01-01", "ownerName": "김철수"}])
+        self.assertEqual(result["eulguSeniorMortgageAmount"], 100_000_000)
+        self.assertEqual(result["eulguCriticalKeywords"], [])
+
+    @patch("registry_gapgu_ocr.fetch_ocr_result")
+    @patch("registry_gapgu_ocr.render_pdf_page_to_png_bytes")
+    @patch("registry_gapgu_ocr.pdf_page_count", return_value=1)
+    def test_leasehold_registration_order_surfaced_as_critical_keyword(
+        self, mock_page_count, mock_render, mock_fetch,
+    ):
+        mock_render.return_value = b"fake-png-bytes"
+        mock_fetch.return_value = clova_ok(LEASEHOLD_ORDER_FIELDS)
+
+        result = extract_ownership_history_from_pdf("fake.pdf")
+
+        self.assertIn("임차권등기명령", result["eulguCriticalKeywords"])
 
 
 if __name__ == "__main__":

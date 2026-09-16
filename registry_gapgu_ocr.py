@@ -1,5 +1,6 @@
 """
-등기부 본문(갑구) OCR 파이프라인 — PDF 페이지 렌더링 → 클로바 OCR → 행 재구성 → parse_gapgu()
+등기부 본문(갑구+을구) OCR 파이프라인 — PDF 페이지 렌더링 → 클로바 OCR → 행 재구성 →
+parse_gapgu() + parse_eulgu()
 ------------------------------------------------------------------------------------------
 registry_summary_ocr.py가 "요약" 페이지를 tesseract로 찾아 처리하는 것과 짝을 이루는
 모듈이다. 다만 요약 페이지와 달리 갑구/을구 본문은 위변조 방지 배경무늬 때문에 tesseract
@@ -19,7 +20,7 @@ tesseract로 잘 안 잡히는 페이지가 있었다(요약 페이지만 예외
 
 from clova_ocr_adapter import CLOVA_OCR_INVOKE_URL, CLOVA_OCR_SECRET, fetch_ocr_result
 from gapgu_ocr_row_parser import extract_rows_from_clova_result
-from registry_parser import parse_gapgu
+from registry_parser import parse_gapgu, parse_eulgu
 from registry_summary_ocr import pdf_page_count, render_pdf_page_to_png_bytes
 
 # 클로바 OCR의 이미지 해상도 상한(8000px)에 걸리지 않도록 300 대신 200을 쓴다 — 실제로
@@ -31,7 +32,13 @@ CLOVA_PAGE_RENDER_DPI = 200
 def extract_ownership_history_from_pdf(pdf_path: str, exclude_pages: set[int] | None = None) -> dict:
     """
     exclude_pages(보통 요약 페이지 번호)를 제외한 PDF의 모든 페이지를 클로바 OCR에 돌려
-    갑구 소유권 이전 이력을 뽑는다.
+    갑구 소유권 이전 이력 + 을구(근저당권/임차권등기명령) 결과를 함께 뽑는다.
+
+    페이지를 갑구/을구로 미리 구분하지 않고 전부 같은 방식(렌더링→클로바→행 재구성)으로
+    처리한 뒤, 같은 행 리스트를 parse_gapgu()와 parse_eulgu() 양쪽에 그대로 넘긴다 —
+    각 함수가 자기 관심사(갑구는 "소유권보존/이전", 을구는 "근저당권설정"/"임차권등기명령")
+    와 무관한 행은 이미 알아서 걸러내므로(각 모듈 실키 검증으로 확인됨) 별도 분리 로직이
+    필요 없다.
 
     클로바 키가 없으면(로컬 개발 등) 다른 어댑터들과 같은 패턴으로 네트워크 호출 자체를
     하지 않고 바로 빈 결과를 반환한다. 특정 페이지의 클로바 호출이 실패해도(키 없음이
@@ -41,12 +48,20 @@ def extract_ownership_history_from_pdf(pdf_path: str, exclude_pages: set[int] | 
     Returns:
         {
             "ownershipHistory": [{"date": "YYYY-MM-DD" | None, "ownerName": str}, ...],
+            "eulguCriticalKeywords": [str, ...],  # 현재는 "임차권등기명령" 하나뿐
+            "eulguSeniorMortgageAmount": int,  # 말소분 제외, 공동담보 중복제거된 근저당 총액(원)
             "pagesProcessed": int,   # 클로바 OCR 호출에 성공한 페이지 수
             "pagesFailed": [int, ...],  # 호출은 됐지만 실패했거나 렌더링 자체가 안 된 페이지 번호
         }
     """
     if not CLOVA_OCR_INVOKE_URL or not CLOVA_OCR_SECRET:
-        return {"ownershipHistory": [], "pagesProcessed": 0, "pagesFailed": []}
+        return {
+            "ownershipHistory": [],
+            "eulguCriticalKeywords": [],
+            "eulguSeniorMortgageAmount": 0,
+            "pagesProcessed": 0,
+            "pagesFailed": [],
+        }
 
     exclude_pages = exclude_pages or set()
     total_pages = pdf_page_count(pdf_path)
@@ -73,9 +88,12 @@ def extract_ownership_history_from_pdf(pdf_path: str, exclude_pages: set[int] | 
         pages_processed += 1
 
     ownership_history = parse_gapgu(all_rows)["ownershipHistory"]
+    eulgu_result = parse_eulgu(all_rows)
 
     return {
         "ownershipHistory": ownership_history,
+        "eulguCriticalKeywords": eulgu_result["criticalKeywords"],
+        "eulguSeniorMortgageAmount": eulgu_result["seniorMortgageAmount"],
         "pagesProcessed": pages_processed,
         "pagesFailed": pages_failed,
     }

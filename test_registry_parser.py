@@ -9,12 +9,12 @@ import unittest
 from registry_parser import parse_registry_rows, parse_gapgu, parse_eulgu
 
 
-def gap_row(rank, purpose, cause="", detail=""):
-    return {"rank": rank, "purpose": purpose, "receipt": "", "cause": cause, "detail": detail}
+def gap_row(rank, purpose, cause="", detail="", receipt=""):
+    return {"rank": rank, "purpose": purpose, "receipt": receipt, "cause": cause, "detail": detail}
 
 
-def eul_row(rank, purpose, detail=""):
-    return {"rank": rank, "purpose": purpose, "receipt": "", "cause": "", "detail": detail}
+def eul_row(rank, purpose, detail="", receipt=""):
+    return {"rank": rank, "purpose": purpose, "receipt": receipt, "cause": "", "detail": detail}
 
 
 class TestParseGapgu(unittest.TestCase):
@@ -84,6 +84,24 @@ class TestParseGapgu(unittest.TestCase):
             ],
         )
 
+    def test_owner_name_landing_in_receipt_field_is_still_found(self):
+        # 2026-09-16 을구 배선 검증 중 실제 클로바 응답으로 발견한 회귀 버그 재현.
+        # gapgu_ocr_row_parser._group_lines_into_row_blocks()가 여러 줄에 걸친 등기목적을
+        # 병합하면서, 접수번호("제N호")가 원래보다 뒤에서 나타나는 실제 문서(등기부등본_
+        # 내아파트.pdf 갑구 1번 행)에서는 split_line_into_row()의 receipt/detail 경계가
+        # 밀려 "소유자 이윤재"가 detail이 아니라 receipt 쪽에 남는다. 이 경우에도
+        # 소유권 이전 이력을 놓치면 안 된다.
+        rows = [
+            gap_row(
+                "1", "소유권이전",
+                cause="2001년 01월 09일",
+                receipt="1999년3월19일 1999년2월10일 소유자 이윤재 581206-******* (전 3) 제33142호",
+                detail="매매 경기 화성군 양감면 송산리 701-15",
+            ),
+        ]
+        result = parse_gapgu(rows)
+        self.assertEqual(result["ownershipHistory"], [{"date": "2001-01-09", "ownerName": "이윤재"}])
+
 
 class TestParseEulgu(unittest.TestCase):
 
@@ -113,6 +131,34 @@ class TestParseEulgu(unittest.TestCase):
         result = parse_eulgu(rows)
         # 1번은 말소, 3번만 유효 -> 100,000,000만 합산돼야 함
         self.assertEqual(result["seniorMortgageAmount"], 100_000_000)
+
+    def test_single_line_cancelling_two_ranks_excludes_both(self):
+        # 국토부 공식 샘플 등기부(등기부등본_내아파트.pdf, 집합건물 을구 3번 행)에서
+        # 실제로 나온 표현 그대로 재현 — 한 줄이 "1번, 2번"을 한꺼번에 말소한다.
+        # 예전 정규식은 첫 번째 순위번호만 잡아서 2번이 여전히 유효한 것으로
+        # 잘못 합산되는 버그가 있었다 (2026-09-16 을구 실키 검증으로 발견).
+        rows = [
+            eul_row("1", "근저당권설정", detail="채권최고액 금360,000,000원"),
+            eul_row("2", "근저당권설정", detail="채권최고액 금120,000,000원"),
+            eul_row("3", "1번근저당권설정, 2번근저당권설정등기말소"),
+        ]
+        result = parse_eulgu(rows)
+        self.assertEqual(result["seniorMortgageAmount"], 0)
+
+    def test_amount_landing_in_receipt_field_is_still_summed(self):
+        # 2026-09-16 을구 배선 검증 중 실제 클로바 응답으로 발견한 회귀 버그 재현
+        # (test_owner_name_landing_in_receipt_field_is_still_found와 같은 원인 —
+        # 등기부등본_내아파트.pdf 을구 4번 행에서 "채권최고액 금115,200,000원"이
+        # split_line_into_row()에 의해 detail이 아니라 receipt 쪽에 남았다).
+        rows = [
+            eul_row(
+                "4", "근저당권설정",
+                receipt="2005년4월4일 2005년4월4일 채권최고액 금115,200,000원 제26863호",
+                detail="설정계약 채무자 김하가",
+            ),
+        ]
+        result = parse_eulgu(rows)
+        self.assertEqual(result["seniorMortgageAmount"], 115_200_000)
 
     def test_joint_collateral_not_double_counted(self):
         # 건물 + 토지에 동일 채권최고액으로 공동담보 설정된 경우 1건으로만 합산

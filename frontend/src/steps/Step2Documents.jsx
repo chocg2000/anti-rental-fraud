@@ -53,6 +53,8 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
           totalSeniorSecuredAmount: result.totalSeniorSecuredAmount,
           sourcePage: result.sourcePage,
           ownershipHistory: result.ownershipHistory,
+          eulguValidSecuredAmount: result.eulguValidSecuredAmount,
+          hasRentRightCommand: result.hasRentRightCommand,
         },
       }))
     } catch (err) {
@@ -225,12 +227,32 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
                 </div>
               )}
 
+              {documents.registryPreview.hasRentRightCommand && (
+                <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5">
+                  <IconAlertTriangle size={15} className="mt-0.5 shrink-0 text-red-600" />
+                  <span className="text-[11.5px] leading-relaxed text-red-700">
+                    을구 본문에서 임차권등기명령이 발견됐습니다 — 최종 진단이 즉시 '위험'으로 표시됩니다.
+                  </span>
+                </div>
+              )}
+
               <div className="flex items-center justify-between border-t border-dashed border-gray-300 pt-2">
                 <span className="text-[12.5px] font-semibold text-gray-700">선순위채권 합계</span>
                 <span className="text-[15px] font-bold text-gray-900">
                   {documents.registryPreview.totalSeniorSecuredAmount.toLocaleString()}원
                 </span>
               </div>
+
+              {documents.registryPreview.eulguValidSecuredAmount > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-gray-500">
+                    을구 본문 근저당 총액 <span className="text-gray-400">(교차검증용, 자동 인식)</span>
+                  </span>
+                  <span className="text-[12.5px] font-semibold text-gray-700">
+                    {documents.registryPreview.eulguValidSecuredAmount.toLocaleString()}원
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>

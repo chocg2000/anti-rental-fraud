@@ -426,6 +426,71 @@ class TestMinimumPriorityRepaymentWiring(unittest.TestCase):
         self.assertEqual(repayment["referenceDate"], "2025-03-26")
 
 
+class TestEulguSecuredAmountCrossCheck(unittest.TestCase):
+    """
+    2026-09-16 을구 배선: 요약 페이지(근저당+전세권 합계)와 을구 본문 직접 파싱(근저당만)
+    결과 중 더 큰 금액을 채택(Max Fallback)하는지 검증한다. 기준 시나리오는
+    TestMarketPriceUnitConversion.test_manwon_to_won_conversion_matches_yatap_safe_scenario와
+    동일(시세 6억, 요약 페이지 선순위 3억, 내 보증금 1억 -> 4억 <= 4.2억 안전).
+    """
+
+    @patch("full_assessment.get_property_info")
+    def test_larger_eulgu_amount_escalates_previously_safe_case_to_risky(self, mock_get_info):
+        # 을구 본문에서 요약 페이지가 놓친 근저당 2억을 추가로 찾았다고 가정 -> 5억으로
+        # 올라가면 내 보증금 1억과 합쳐 6억 > 4.2억(임계값) -> 안전이었던 판정이 위험으로.
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+            eulgu_valid_secured_amount=500_000_000,
+        )
+
+        self.assertTrue(result["tenancySafety"]["depositPriorityRisk"]["riskyDepositPriority"])
+        self.assertEqual(result["overallGrade"], "warning")
+
+    @patch("full_assessment.get_property_info")
+    def test_smaller_eulgu_amount_does_not_reduce_risk_from_summary(self, mock_get_info):
+        # 을구 쪽이 더 작게(또는 0으로) 나와도 요약 페이지의 더 큰 금액을 절대 깎지 않는다
+        # (거짓 안심 방지 — Max Fallback은 한쪽 방향으로만 작동해야 한다).
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=250_000_000,  # 요약 3억 기준으로 이미 위험(danger 시나리오와 동일 입력)
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            registry_summary_text=YATAP_REGISTRY_OCR_TEXT,
+            eulgu_valid_secured_amount=0,  # 을구 쪽은 전부 말소돼 0으로 나온 경우
+        )
+
+        self.assertTrue(result["tenancySafety"]["depositPriorityRisk"]["riskyDepositPriority"])
+
+    @patch("full_assessment.get_property_info")
+    def test_eulgu_amount_used_when_summary_text_absent(self, mock_get_info):
+        # 요약 페이지 자체가 없어도(registry_summary_text=None) 을구 본문 값만으로
+        # 깡통전세 위험을 계산해야 한다 — "확인 불가"로 방치하면 안 된다.
+        mock_get_info.return_value = make_property_info(market_price=60_000)
+
+        result = run_full_assessment(
+            address="경기 성남시 분당구 야탑동 335",
+            target_area=39.6,
+            my_deposit=100_000_000,
+            contract_landlord_name="조춘근",
+            property_type="multi_household",
+            eulgu_valid_secured_amount=500_000_000,
+        )
+
+        deposit_risk = result["tenancySafety"]["depositPriorityRisk"]
+        self.assertIsNotNone(deposit_risk["riskyDepositPriority"])
+        self.assertTrue(deposit_risk["riskyDepositPriority"])
+
+
 class TestRegistryCriticalKeywordsWiring(unittest.TestCase):
 
     @patch("full_assessment.get_property_info")

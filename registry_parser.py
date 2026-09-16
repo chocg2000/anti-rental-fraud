@@ -28,6 +28,8 @@ CRITICAL_KEYWORD_EULGU = "임차권등기명령"
 
 # "3번가압류등기말소", "1번근저당권설정등기말소" 같은 표현에서 취소 대상 순위번호를 뽑는다.
 _CANCEL_REF_PATTERN = re.compile(r'(\d+)\s*번[^말]*말소')
+_RANK_REF_PATTERN = re.compile(r'(\d+)\s*번')
+_MALSO_KEYWORD = "말소"
 _AMOUNT_PATTERN = re.compile(r'채권최고액\s*금?\s*([\d,]+)\s*원')
 _OWNER_PATTERN = re.compile(r'소유자\s+([가-힣A-Za-z0-9]+)')
 _DATE_PATTERN = re.compile(r'(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일')
@@ -41,12 +43,32 @@ def _rank_base(rank: str) -> str:
 
 
 def _find_canceled_ranks(rows: list[dict]) -> set[str]:
-    """이 섹션(갑구 또는 을구) 안에서 말소 대상으로 참조된 순위번호 집합을 찾는다."""
+    """
+    이 섹션(갑구 또는 을구) 안에서 말소 대상으로 참조된 순위번호 집합을 찾는다.
+
+    "1번근저당권설정, 2번근저당권설정등기말소"처럼 한 행이 여러 순위번호를 한꺼번에
+    말소하는 실제 사례(2026-09-16 을구 실키 검증으로 발견 — 국토부 제공 공식 샘플
+    등기부 자체에 이 패턴이 있었다)가 있다. `_CANCEL_REF_PATTERN.search()`는 첫 번째
+    "N번"만 캡처하고 그 뒤 "[^말]*말소"가 이미 그 첫 매치 안에서 소비돼버려 두 번째
+    이후 순위번호는 영영 못 찾는다 — 이러면 이미 말소된 근저당이 여전히 유효한 것으로
+    잘못 합산돼 위험도를 실제보다 과대평가하게 된다. 그래서 "말소" 키워드 앞부분
+    전체에서 "N번" 참조를 전부 훑는다.
+
+    purpose뿐 아니라 detail까지 합쳐서 검사한다 — gapgu_ocr_row_parser._group_lines_
+    into_rows()는 순위번호로 시작하는 첫 줄만 컬럼을 분할하고 그 다음에 이어지는
+    줄(예: "2번근저당권설정 제999호 해지", "등기말소")은 전부 detail에 이어붙이는
+    설계라, 말소 참조가 여러 줄에 걸친 경우 "말소"와 뒤쪽 순위번호가 purpose가 아니라
+    detail 쪽에 남기 때문이다.
+    """
     canceled = set()
     for row in rows:
-        m = _CANCEL_REF_PATTERN.search(row.get("purpose", "") or "")
-        if m:
-            canceled.add(m.group(1))
+        purpose = row.get("purpose", "") or ""
+        detail = row.get("detail", "") or ""
+        combined = f"{purpose} {detail}"
+        idx = combined.find(_MALSO_KEYWORD)
+        if idx == -1:
+            continue
+        canceled.update(_RANK_REF_PATTERN.findall(combined[:idx]))
     return canceled
 
 
@@ -73,12 +95,15 @@ def parse_gapgu(rows: list[dict]) -> dict:
 
     for row in rows:
         purpose = row.get("purpose", "") or ""
+        receipt = row.get("receipt", "") or ""
         detail = row.get("detail", "") or ""
         combined = f"{purpose} {detail}"
         is_canceled = _rank_base(row.get("rank", "")) in canceled_ranks
         # "2번가압류등기말소"처럼 말소를 기록하는 행 자체의 텍스트에도 '가압류' 같은 단어가
         # 포함돼 있어 그 자체가 새 위험 신호로 오탐지될 수 있으므로, 말소 기록 행 자체는 제외한다.
-        is_cancellation_entry = bool(_CANCEL_REF_PATTERN.search(purpose))
+        # purpose+detail 전체를 본다 — 여러 줄에 걸친 말소 참조는 detail에 남을 수 있다
+        # (_find_canceled_ranks 주석 참고).
+        is_cancellation_entry = bool(_CANCEL_REF_PATTERN.search(combined))
 
         if not is_canceled and not is_cancellation_entry:
             for kw in CRITICAL_KEYWORDS_GAPGU:
@@ -95,8 +120,14 @@ def parse_gapgu(rows: list[dict]) -> dict:
         # "소유권이전" 문자열 매칭만으로는 이 케이스를 놓쳐서 최근 소유주 변경 자체가
         # 통째로 빠지는 실제 버그였다 — "지분전부"만으로도 매칭하도록 넓힘.
         if "소유권보존" in purpose or "소유권이전" in purpose or "지분전부" in purpose:
-            owner_match = _OWNER_PATTERN.search(detail)
-            date_str = _parse_date(row.get("cause", "")) or _parse_date(row.get("receipt", ""))
+            # "소유자 OOO"가 항상 detail에만 있는 게 아니다 — 실키 검증(2026-09-16)으로
+            # 확인: 등기목적이 물리적으로 여러 줄에 걸쳐 찍힌 행에서
+            # gapgu_ocr_row_parser._group_lines_into_row_blocks()가 그 줄들을 합치면,
+            # "접수번호(제N호)"가 원래보다 뒤에서 나타나면서 split_line_into_row()의
+            # receipt/detail 경계가 밀려 "소유자 OOO"가 receipt 쪽에 남는 실제 사례가
+            # 있다. 어느 칸에 있든 놓치지 않도록 둘 다 합쳐서 찾는다.
+            owner_match = _OWNER_PATTERN.search(f"{receipt} {detail}")
+            date_str = _parse_date(row.get("cause", "")) or _parse_date(receipt)
             if owner_match:
                 ownership_history.append({"date": date_str, "ownerName": owner_match.group(1)})
 
@@ -120,10 +151,17 @@ def parse_eulgu(rows: list[dict]) -> dict:
 
     for row in rows:
         purpose = row.get("purpose", "") or ""
+        receipt = row.get("receipt", "") or ""
         detail = row.get("detail", "") or ""
         combined = f"{purpose} {detail}"
+        # "채권최고액 금...원"이 항상 detail에만 있는 게 아니다 — parse_gapgu()의 소유자
+        # 이름과 같은 이유(여러 줄에 걸친 등기목적이 병합되면서 receipt/detail 경계가
+        # 밀리는 실키 케이스, 2026-09-16 검증)로 receipt 쪽에 남을 수 있다.
+        receipt_and_detail = f"{receipt} {detail}"
         is_canceled = _rank_base(row.get("rank", "")) in canceled_ranks
-        is_cancellation_entry = bool(_CANCEL_REF_PATTERN.search(purpose))
+        # purpose+detail 전체를 본다 — 여러 줄에 걸친 말소 참조는 detail에 남을 수 있다
+        # (_find_canceled_ranks 주석 참고).
+        is_cancellation_entry = bool(_CANCEL_REF_PATTERN.search(combined))
 
         # 임차권등기명령은 과거 이력 자체가 임대인 성향 감점 신호이므로 말소 여부와 무관하게 기록.
         # 단, 말소를 기록하는 행 자체("n번임차권등기명령 말소")의 텍스트는 제외한다.
@@ -132,12 +170,12 @@ def parse_eulgu(rows: list[dict]) -> dict:
             keywords_found.append(CRITICAL_KEYWORD_EULGU)
 
         if "근저당권설정" in purpose and not is_canceled and not is_cancellation_entry:
-            m = _AMOUNT_PATTERN.search(detail)
+            m = _AMOUNT_PATTERN.search(receipt_and_detail)
             if not m:
                 continue
             amount = int(m.group(1).replace(",", ""))
 
-            if "공동담보" in detail:
+            if "공동담보" in receipt_and_detail:
                 joint_collateral_detected = True
                 if amount in seen_joint_amounts:
                     continue  # 동일 채권이 건물+토지에 중복 설정된 경우 1건으로만 합산

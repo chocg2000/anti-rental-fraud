@@ -55,6 +55,7 @@ def run_full_assessment(
     tax_clearance: dict | None = None,
     ownership_history: list[dict] | None = None,
     registry_critical_keywords: list[str] | None = None,
+    eulgu_valid_secured_amount: int | None = None,
     user_confirmed_violation_building: bool = False,
     move_in_date: str | None = None,
     has_fixed_date: bool | None = None,
@@ -80,6 +81,12 @@ def run_full_assessment(
             (선택 — 본문 갑구 OCR 데이터 확보 경로가 아직 없어 대부분 비어있을 것으로 예상)
         registry_critical_keywords: 등기부 본문 갑구/을구 치명적 키워드
             (가압류/압류/가등기/가처분/경매개시결정/임차권등기명령) — 있으면 즉시 danger
+        eulgu_valid_secured_amount: registry_gapgu_ocr.py가 을구 본문에서 직접 뽑은
+            "말소분 제외 근저당 총액"(원 단위, 선택 — B2B/USE_CLOVA_OCR=true 전용).
+            registry_summary_text(요약 페이지)가 이미 뽑은 선순위채권 합계와 교차검증해
+            더 큰 쪽을 채택한다(Max Fallback) — 요약 페이지 OCR이 근저당 일부를 놓쳐도
+            "위험을 과소평가하는" 방향으로는 절대 틀리지 않게 하기 위함이다. 요약 페이지가
+            아예 없어도(registry_summary_text=None) 이 값만으로 깡통전세 위험을 계산한다.
         user_confirmed_violation_building: 유저가 직접 확인한 위반건축물 여부.
             건축물대장 API는 이 정보를 제공하지 않으므로 반드시 유저 자가확인
             체크리스트에서 받아와야 한다. True면 최종 등급이 danger로 강제된다.
@@ -130,6 +137,16 @@ def run_full_assessment(
         registry_owners = []
         senior_secured_amount = None
         active_rights = []
+
+    # 요약 페이지(근저당+전세권 합계)와 을구 본문 직접 파싱(근저당만) 결과를 교차검증한다.
+    # 둘 중 더 큰 금액을 채택(Max Fallback) — 절대 더 작은 쪽으로 깎지 않는다. 한쪽이
+    # 아예 없으면(None) 있는 쪽 그대로 쓴다 — 둘 다 없을 때만 "확인 불가"로 남는다.
+    if eulgu_valid_secured_amount is not None:
+        senior_secured_amount = (
+            max(senior_secured_amount, eulgu_valid_secured_amount)
+            if senior_secured_amount is not None
+            else eulgu_valid_secured_amount
+        )
 
     market_price_won = (
         property_info["marketPrice"] * _WON_PER_MANWON

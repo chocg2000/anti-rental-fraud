@@ -125,6 +125,58 @@ class TestAssessmentEndpoint(unittest.TestCase):
         self.assertFalse(body["tenancySafety"]["depositPriorityRisk"]["riskyDepositPriority"])
 
     @patch("full_assessment.get_property_info")
+    def test_larger_eulgu_amount_escalates_previously_safe_case(self, mock_get_info):
+        # 을구 실키 검증 배선(2026-09-16): 요약 페이지 3억 + 을구 본문 직접 파싱 결과 중
+        # 더 큰 쪽을 채택(Max Fallback)하는 게 API 레이어까지 그대로 전달되는지 확인.
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+
+        response = client.post("/assessment", json=minimal_payload(
+            property_type="multi_household",
+            registry_ocr_text=YATAP_REGISTRY_OCR_TEXT,
+            eulgu_valid_secured_amount=500_000_000,  # 요약(3억)보다 큼
+        ))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["tenancySafety"]["depositPriorityRisk"]["riskyDepositPriority"])
+        self.assertEqual(body["overallGrade"], "warning")
+
+    @patch("full_assessment.get_property_info")
+    def test_has_rent_right_command_forces_immediate_danger(self, mock_get_info):
+        # 을구 본문에서 임차권등기명령이 발견되면(has_rent_right_command=true) 별도
+        # 판정 로직 없이 기존 registry_critical_keywords 최우선 규칙에 합류해 즉시
+        # danger가 돼야 한다 — 다른 항목이 전부 안전한 시나리오로 확인한다.
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+
+        response = client.post("/assessment", json=minimal_payload(
+            property_type="multi_household",
+            registry_ocr_text=YATAP_REGISTRY_OCR_TEXT,
+            has_rent_right_command=True,
+        ))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["overallGrade"], "danger")
+        self.assertTrue(any("임차권등기명령" in r for r in body["reasons"]))
+
+    @patch("full_assessment.get_property_info")
+    def test_has_rent_right_command_merges_with_explicit_critical_keywords(self, mock_get_info):
+        # registry_critical_keywords를 이미 명시적으로 보낸 경우에도 중복 없이 합쳐져야 한다.
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+
+        response = client.post("/assessment", json=minimal_payload(
+            registry_critical_keywords=["가압류"],
+            has_rent_right_command=True,
+        ))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["overallGrade"], "danger")
+        reason = body["reasons"][0]
+        self.assertIn("가압류", reason)
+        self.assertIn("임차권등기명령", reason)
+
+    @patch("full_assessment.get_property_info")
     def test_landlord_mismatch_returns_danger(self, mock_get_info):
         mock_get_info.return_value = BASE_PROPERTY_INFO
 
@@ -268,6 +320,8 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
         }
         mock_gapgu.return_value = {
             "ownershipHistory": [{"date": "2015-07-29", "ownerName": "조춘근"}],
+            "eulguCriticalKeywords": ["임차권등기명령"],
+            "eulguSeniorMortgageAmount": 138_000_000,
             "pagesProcessed": 4,
             "pagesFailed": [],
         }
@@ -284,6 +338,8 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
         self.assertEqual(body["owners"][0]["ownerName"], "조춘근")
         self.assertIn("주요 등기사항 요약", body["registryOcrText"])
         self.assertEqual(body["ownershipHistory"], [{"date": "2015-07-29", "ownerName": "조춘근"}])
+        self.assertEqual(body["eulguValidSecuredAmount"], 138_000_000)
+        self.assertTrue(body["hasRentRightCommand"])
 
         # 업로드된 내용이 임시 파일 경로로 그대로 전달됐는지만 확인 (내용 자체는 모킹 대상 밖)
         mock_find_and_parse.assert_called_once()
@@ -310,7 +366,10 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["ownershipHistory"], [])
+        body = response.json()
+        self.assertEqual(body["ownershipHistory"], [])
+        self.assertEqual(body["eulguValidSecuredAmount"], 0)
+        self.assertFalse(body["hasRentRightCommand"])
         mock_gapgu.assert_not_called()
 
     @patch("api.USE_CLOVA_OCR", True)
@@ -323,7 +382,13 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
             "owners": [], "activeRights": [], "totalSeniorSecuredAmount": 0,
             "_sourcePage": 5, "_rawOcrText": "주요 등기사항 요약 (참고용) ...",
         }
-        mock_gapgu.return_value = {"ownershipHistory": [], "pagesProcessed": 0, "pagesFailed": []}
+        mock_gapgu.return_value = {
+            "ownershipHistory": [],
+            "eulguCriticalKeywords": [],
+            "eulguSeniorMortgageAmount": 0,
+            "pagesProcessed": 0,
+            "pagesFailed": [],
+        }
 
         response = client.post(
             "/registry/upload",

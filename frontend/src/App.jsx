@@ -82,6 +82,12 @@ function AppRoutes() {
     if (documents.registryPreview?.ownershipHistory?.length > 0) {
       payload.ownership_history = documents.registryPreview.ownershipHistory
     }
+    if (documents.registryPreview?.eulguValidSecuredAmount > 0) {
+      payload.eulgu_valid_secured_amount = documents.registryPreview.eulguValidSecuredAmount
+    }
+    if (documents.registryPreview?.hasRentRightCommand) {
+      payload.has_rent_right_command = true
+    }
     if (documents.taxChoice === 'yes') {
       payload.tax_clearance = {
         submitted: true,

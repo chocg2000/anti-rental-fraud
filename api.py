@@ -103,6 +103,20 @@ class AssessmentRequest(BaseModel):
         default=None,
         description="등기부 본문 갑구/을구 치명적 키워드 — 있으면 즉시 danger",
     )
+    eulgu_valid_secured_amount: int | None = Field(
+        default=None,
+        description="을구 본문 OCR(네이버 클로바)로 직접 뽑은 '말소분 제외 근저당 총액'(원 "
+                    "단위, B2B/USE_CLOVA_OCR=true 전용). registry_ocr_text의 요약 페이지 "
+                    "합계와 교차검증해 더 큰 쪽을 채택한다(Max Fallback) — 요약 페이지가 "
+                    "놓친 근저당이 있어도 위험을 과소평가하지 않기 위함이다.",
+    )
+    has_rent_right_command: bool = Field(
+        default=False,
+        description="을구 본문에서 임차권등기명령이 하나라도 발견됐는지. True면 "
+                    "registry_critical_keywords에 자동으로 합쳐져 즉시 danger로 강제된다 "
+                    "(임차권등기명령은 과거 보증금 미반환으로 법원 명령까지 간 전형적인 "
+                    "악성 매물 신호).",
+    )
     user_confirmed_violation_building: bool = Field(
         default=False,
         description="유저 자가확인 위반건축물 여부. 건축물대장 API는 이 값을 절대 제공하지 "
@@ -146,6 +160,18 @@ class RegistryUploadResponse(BaseModel):
                     "유저가 화면에서 확인/수정한 뒤 그대로 /assessment의 ownership_history로 "
                     "다시 보내면 사기 패턴 판별에 쓰인다.",
     )
+    eulguValidSecuredAmount: int = Field(
+        default=0,
+        description="을구 본문 OCR로 직접 뽑은 말소분 제외 근저당 총액(원). "
+                    "USE_CLOVA_OCR=false(B2C 기본값)이면 항상 0 — 그대로 /assessment의 "
+                    "eulgu_valid_secured_amount로 다시 보내면 요약 페이지 합계와 교차검증된다.",
+    )
+    hasRentRightCommand: bool = Field(
+        default=False,
+        description="을구 본문에서 임차권등기명령이 발견됐는지. USE_CLOVA_OCR=false(B2C "
+                    "기본값)이면 항상 False — 그대로 /assessment의 has_rent_right_command로 "
+                    "다시 보내면 즉시 danger로 강제된다.",
+    )
 
 
 @app.exception_handler(Exception)
@@ -176,6 +202,14 @@ def create_assessment(payload: AssessmentRequest) -> dict:
         if payload.ownership_history else None
     )
 
+    # 임차권등기명령은 registry_critical_keywords와 별도 필드로 받되(프론트에서 "을구
+    # 본문 발견 여부"를 명시적인 boolean으로 다루기 편하도록), 판정 로직 자체는 새로
+    # 만들지 않고 기존 registry_critical_keywords 경로(있으면 즉시 danger, overall_safety_
+    # assessment.py 최우선 규칙)에 그대로 합류시킨다.
+    registry_critical_keywords = list(payload.registry_critical_keywords or [])
+    if payload.has_rent_right_command and "임차권등기명령" not in registry_critical_keywords:
+        registry_critical_keywords.append("임차권등기명령")
+
     result = run_full_assessment(
         address=payload.address,
         target_area=payload.target_area,
@@ -186,7 +220,8 @@ def create_assessment(payload: AssessmentRequest) -> dict:
         registry_summary_text=payload.registry_ocr_text,
         tax_clearance=tax_clearance,
         ownership_history=ownership_history,
-        registry_critical_keywords=payload.registry_critical_keywords,
+        registry_critical_keywords=registry_critical_keywords or None,
+        eulgu_valid_secured_amount=payload.eulgu_valid_secured_amount,
         user_confirmed_violation_building=payload.user_confirmed_violation_building,
         move_in_date=payload.move_in_date,
         has_fixed_date=payload.has_fixed_date,
@@ -259,7 +294,13 @@ def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
                 tmp_path, exclude_pages={result["_sourcePage"]}
             )
         else:
-            gapgu_result = {"ownershipHistory": [], "pagesProcessed": 0, "pagesFailed": []}
+            gapgu_result = {
+                "ownershipHistory": [],
+                "eulguCriticalKeywords": [],
+                "eulguSeniorMortgageAmount": 0,
+                "pagesProcessed": 0,
+                "pagesFailed": [],
+            }
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
@@ -273,4 +314,6 @@ def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
         "activeRights": result["activeRights"],
         "totalSeniorSecuredAmount": result["totalSeniorSecuredAmount"],
         "ownershipHistory": gapgu_result["ownershipHistory"],
+        "eulguValidSecuredAmount": gapgu_result["eulguSeniorMortgageAmount"],
+        "hasRentRightCommand": "임차권등기명령" in gapgu_result["eulguCriticalKeywords"],
     }
