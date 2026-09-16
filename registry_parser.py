@@ -87,7 +87,14 @@ def parse_gapgu(rows: list[dict]) -> dict:
             if TRUST_KEYWORD in combined:
                 trust_registered = True
 
-        if "소유권보존" in purpose or "소유권이전" in purpose:
+        # "공유자전원지분전부이전"(공유지분을 한 명이 전부 사들여 단독소유가 되는 경우)도
+        # 소유권 이전 이력에 포함해야 한다 — 실제 클로바 OCR로 확인해보니(2026-09-16,
+        # registry_gapgu_ocr.py 실키 검증) 등기목적 칸이 좁아 "...지분전부" / "이전"으로
+        # 두 줄에 걸쳐 찍히는 문서가 있고, "이전"이 있는 둘째 줄은 순위번호가 없어
+        # gapgu_ocr_row_parser가 노이즈로 걸러버려 purpose에 "지분전부"까지만 남는다.
+        # "소유권이전" 문자열 매칭만으로는 이 케이스를 놓쳐서 최근 소유주 변경 자체가
+        # 통째로 빠지는 실제 버그였다 — "지분전부"만으로도 매칭하도록 넓힘.
+        if "소유권보존" in purpose or "소유권이전" in purpose or "지분전부" in purpose:
             owner_match = _OWNER_PATTERN.search(detail)
             date_str = _parse_date(row.get("cause", "")) or _parse_date(row.get("receipt", ""))
             if owner_match:

@@ -46,8 +46,11 @@ def detect_new_villa_recent_ownership_change(
         as_of: 판단 기준일 (기본값: 오늘)
 
     Returns:
-        {"triggered": bool, "reason": str, "isNewBuilding": bool, "isRecentOwnershipChange": bool}
+        {"triggered": bool, "reason": str, "isNewBuilding": bool, "isRecentOwnershipChange": bool,
+         "ownershipHistory": list[dict], "latestTransferDate": "YYYY-MM-DD" | None}
         스코어링 룰 3.6절 순서에 따라 triggered=True면 최종 등급을 최소 warning으로 강제해야 한다.
+        ownershipHistory/latestTransferDate는 입력을 그대로/가공해 돌려주는 것뿐 — 새 판정
+        로직이 아니라 프론트(Step3Result)가 소유권 변동 타임라인을 그리는 데 쓴다.
     """
     if as_of is None:
         as_of = date.today()
@@ -84,4 +87,6 @@ def detect_new_villa_recent_ownership_change(
         "reason": reason,
         "isNewBuilding": is_new_building,
         "isRecentOwnershipChange": is_recent_change,
+        "ownershipHistory": ownership_history,
+        "latestTransferDate": latest_transfer_date.isoformat() if latest_transfer_date else None,
     }

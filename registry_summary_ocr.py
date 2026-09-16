@@ -30,7 +30,7 @@ PDFTOPPM_CMD = os.environ.get("PDFTOPPM_CMD", "pdftoppm")
 PDFINFO_CMD = os.environ.get("PDFINFO_CMD", "pdfinfo")
 
 
-def _pdf_page_count(pdf_path: str) -> int:
+def pdf_page_count(pdf_path: str) -> int:
     # encoding을 명시하지 않으면 subprocess는 플랫폼 기본 인코딩을 쓴다 — Windows에서는
     # 그게 cp949라 tesseract/pdfinfo의 UTF-8 출력을 디코딩하다 크래시한다(실제로 겪은 버그).
     # errors="replace"도 필요하다 — 포플러 Windows 빌드는 파일 경로 등 일부를 로컬
@@ -44,8 +44,12 @@ def _pdf_page_count(pdf_path: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-def _ocr_page(pdf_path: str, page_num: int, dpi: int = 300) -> str:
-    """PDF의 특정 페이지를 이미지로 뜨고 한글 OCR을 돌려 텍스트를 반환한다."""
+def render_pdf_page_to_png_bytes(pdf_path: str, page_num: int, dpi: int = 300) -> bytes:
+    """
+    PDF의 특정 페이지를 PNG 이미지로 렌더링해서 바이트로 반환한다. registry_gapgu_ocr.py가
+    클로바 OCR에 보낼 페이지 이미지를 만들 때도 이 함수를 그대로 재사용한다(클로바는
+    해상도 상한이 있어 dpi를 낮춰서 호출 — registry_gapgu_ocr.py 참고).
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         prefix = f"{tmpdir}/page"
         subprocess.run(
@@ -55,13 +59,28 @@ def _ocr_page(pdf_path: str, page_num: int, dpi: int = 300) -> str:
         )
         png_files = glob.glob(f"{prefix}*.png")
         if not png_files:
-            return ""
+            return b""
+        with open(png_files[0], "rb") as f:
+            return f.read()
 
+
+def _ocr_page(pdf_path: str, page_num: int, dpi: int = 300) -> str:
+    """PDF의 특정 페이지를 이미지로 뜨고 한글 OCR을 돌려 텍스트를 반환한다."""
+    png_bytes = render_pdf_page_to_png_bytes(pdf_path, page_num, dpi=dpi)
+    if not png_bytes:
+        return ""
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp.write(png_bytes)
+        tmp_path = tmp.name
+    try:
         result = subprocess.run(
-            [TESSERACT_CMD, png_files[0], "stdout", "-l", "kor", "--psm", "6"],
+            [TESSERACT_CMD, tmp_path, "stdout", "-l", "kor", "--psm", "6"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
         return result.stdout
+    finally:
+        os.unlink(tmp_path)
 
 
 def find_and_parse_summary_page(pdf_path: str, search_last_n_pages: int = 3) -> dict:
@@ -73,7 +92,7 @@ def find_and_parse_summary_page(pdf_path: str, search_last_n_pages: int = 3) -> 
     나쁘지만, 이 요약 페이지는 배경무늬가 거의 없어 정확도가 훨씬 높다 — 그래서 이
     페이지 하나만 정확히 찾아내는 전략이 전체 문서를 다 OCR하는 것보다 훨씬 효율적이다.
     """
-    total_pages = _pdf_page_count(pdf_path)
+    total_pages = pdf_page_count(pdf_path)
     if total_pages == 0:
         raise RuntimeError("PDF 페이지 수를 확인할 수 없습니다.")
 

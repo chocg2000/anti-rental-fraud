@@ -79,6 +79,9 @@ function AppRoutes() {
     if (documents.uploadState === 'uploaded' && documents.registryOcrText.trim() !== '') {
       payload.registry_ocr_text = documents.registryOcrText
     }
+    if (documents.registryPreview?.ownershipHistory?.length > 0) {
+      payload.ownership_history = documents.registryPreview.ownershipHistory
+    }
     if (documents.taxChoice === 'yes') {
       payload.tax_clearance = {
         submitted: true,

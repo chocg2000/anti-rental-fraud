@@ -66,6 +66,24 @@ class TestParseGapgu(unittest.TestCase):
         self.assertEqual(result["ownershipHistory"][-1]["ownerName"], "박영희")
         self.assertEqual(result["ownershipHistory"][-1]["date"], "2024-01-10")
 
+    def test_joint_owners_buyout_wrapped_across_two_lines_is_detected(self):
+        # 2026-09-16 실키 검증(registry_gapgu_ocr.py)으로 실제 발견한 케이스 그대로 재현.
+        # "공유자전원지분전부이전"이 등기목적 칸에서 "공유자전원지분전부"/"이전" 두 줄로
+        # 잘려 찍혔고, "이전"만 있는 둘째 줄은 순위번호가 없어 행 재조합 단계에서
+        # 노이즈로 걸러진다 — purpose에는 "지분전부"까지만 남는다.
+        rows = [
+            gap_row("1", "소유권이전", cause="1999년2월10일 매매", detail="소유자 이윤재"),
+            gap_row("5", "공유자전원지분전부", cause="2015년7월17일 매매", detail="소유자 조춘근"),
+        ]
+        result = parse_gapgu(rows)
+        self.assertEqual(
+            result["ownershipHistory"],
+            [
+                {"date": "1999-02-10", "ownerName": "이윤재"},
+                {"date": "2015-07-17", "ownerName": "조춘근"},
+            ],
+        )
+
 
 class TestParseEulgu(unittest.TestCase):
 

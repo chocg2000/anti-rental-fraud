@@ -245,19 +245,31 @@ class TestAssessmentResultRetrieval(unittest.TestCase):
 
 class TestRegistryUploadEndpoint(unittest.TestCase):
     """
-    실제 tesseract/poppler 없이(이 개발 환경엔 설치돼있지 않음) find_and_parse_summary_page만
-    모킹해서 API 배선(파일 검증, 임시파일 처리, RuntimeError->400 변환, 응답 매핑)만 검증한다.
-    OCR/파싱 로직 자체는 registry_summary_ocr.py, registry_summary_parser.py가 이미 커버함.
+    실제 tesseract/poppler/클로바 호출 없이 find_and_parse_summary_page와
+    extract_ownership_history_from_pdf를 모두 모킹해서 API 배선(파일 검증, 임시파일 처리,
+    RuntimeError->400 변환, 두 결과의 응답 매핑, exclude_pages 전달)만 검증한다.
+    OCR/파싱 로직 자체는 registry_summary_ocr.py, registry_summary_parser.py,
+    registry_gapgu_ocr.py가 이미 각자 커버함.
+
+    USE_CLOVA_OCR 기본값은 false(B2C 비용 방어)이므로, 갑구 OCR 경로 자체를 검증하는
+    테스트는 명시적으로 @patch("api.USE_CLOVA_OCR", True)를 걸어야 한다.
     """
 
+    @patch("api.USE_CLOVA_OCR", True)
+    @patch("api.extract_ownership_history_from_pdf")
     @patch("api.find_and_parse_summary_page")
-    def test_successful_upload_returns_parsed_preview(self, mock_find_and_parse):
+    def test_successful_upload_returns_parsed_preview(self, mock_find_and_parse, mock_gapgu):
         mock_find_and_parse.return_value = {
             "owners": [{"ownerName": "조춘근", "shareType": "단독소유"}],
             "activeRights": [{"rank": "11", "rightType": "전세권설정", "amount": 300_000_000, "rawLine": "..."}],
             "totalSeniorSecuredAmount": 300_000_000,
             "_sourcePage": 5,
             "_rawOcrText": "주요 등기사항 요약 (참고용) ...",
+        }
+        mock_gapgu.return_value = {
+            "ownershipHistory": [{"date": "2015-07-29", "ownerName": "조춘근"}],
+            "pagesProcessed": 4,
+            "pagesFailed": [],
         }
 
         response = client.post(
@@ -271,14 +283,59 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
         self.assertEqual(body["totalSeniorSecuredAmount"], 300_000_000)
         self.assertEqual(body["owners"][0]["ownerName"], "조춘근")
         self.assertIn("주요 등기사항 요약", body["registryOcrText"])
+        self.assertEqual(body["ownershipHistory"], [{"date": "2015-07-29", "ownerName": "조춘근"}])
 
         # 업로드된 내용이 임시 파일 경로로 그대로 전달됐는지만 확인 (내용 자체는 모킹 대상 밖)
         mock_find_and_parse.assert_called_once()
         called_path = mock_find_and_parse.call_args[0][0]
         self.assertTrue(called_path.endswith(".pdf"))
 
+        # 요약 페이지는 갑구 OCR 대상에서 제외돼야 한다
+        mock_gapgu.assert_called_once()
+        self.assertEqual(mock_gapgu.call_args[1]["exclude_pages"], {5})
+
+    @patch("api.extract_ownership_history_from_pdf")
     @patch("api.find_and_parse_summary_page")
-    def test_summary_page_not_found_returns_400_not_500(self, mock_find_and_parse):
+    def test_clova_ocr_skipped_by_default_for_b2c(self, mock_find_and_parse, mock_gapgu):
+        # USE_CLOVA_OCR 기본값(false)에서는 클로바 API 호출 자체가 일어나지 않아야 한다
+        # (B2C 무료 버전의 비용 방어 핵심 — 키가 세팅돼 있어도 호출되면 안 됨).
+        mock_find_and_parse.return_value = {
+            "owners": [], "activeRights": [], "totalSeniorSecuredAmount": 0,
+            "_sourcePage": 5, "_rawOcrText": "주요 등기사항 요약 (참고용) ...",
+        }
+
+        response = client.post(
+            "/registry/upload",
+            files={"file": ("등기부등본.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ownershipHistory"], [])
+        mock_gapgu.assert_not_called()
+
+    @patch("api.USE_CLOVA_OCR", True)
+    @patch("api.extract_ownership_history_from_pdf")
+    @patch("api.find_and_parse_summary_page")
+    def test_clova_unavailable_still_returns_summary_preview(self, mock_find_and_parse, mock_gapgu):
+        # USE_CLOVA_OCR=true인데 클로바 키가 없는 환경(B2B 로컬 개발 등)에서도
+        # 요약 페이지 미리보기 자체는 그대로 나와야 한다.
+        mock_find_and_parse.return_value = {
+            "owners": [], "activeRights": [], "totalSeniorSecuredAmount": 0,
+            "_sourcePage": 5, "_rawOcrText": "주요 등기사항 요약 (참고용) ...",
+        }
+        mock_gapgu.return_value = {"ownershipHistory": [], "pagesProcessed": 0, "pagesFailed": []}
+
+        response = client.post(
+            "/registry/upload",
+            files={"file": ("등기부등본.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ownershipHistory"], [])
+
+    @patch("api.extract_ownership_history_from_pdf")
+    @patch("api.find_and_parse_summary_page")
+    def test_summary_page_not_found_returns_400_not_500(self, mock_find_and_parse, mock_gapgu):
         mock_find_and_parse.side_effect = RuntimeError(
             "'주요 등기사항 요약' 페이지를 마지막 3장 안에서 찾지 못했습니다."
         )
@@ -290,9 +347,11 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("요약", response.json()["detail"])
+        mock_gapgu.assert_not_called()
 
+    @patch("api.extract_ownership_history_from_pdf")
     @patch("api.find_and_parse_summary_page")
-    def test_non_pdf_upload_is_rejected_before_ocr_runs(self, mock_find_and_parse):
+    def test_non_pdf_upload_is_rejected_before_ocr_runs(self, mock_find_and_parse, mock_gapgu):
         response = client.post(
             "/registry/upload",
             files={"file": ("메모.txt", b"hello", "text/plain")},
@@ -300,9 +359,11 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         mock_find_and_parse.assert_not_called()
+        mock_gapgu.assert_not_called()
 
+    @patch("api.extract_ownership_history_from_pdf")
     @patch("api.find_and_parse_summary_page")
-    def test_oversized_upload_is_rejected_before_ocr_runs(self, mock_find_and_parse):
+    def test_oversized_upload_is_rejected_before_ocr_runs(self, mock_find_and_parse, mock_gapgu):
         with patch("api.MAX_REGISTRY_UPLOAD_BYTES", 10):
             response = client.post(
                 "/registry/upload",
@@ -311,9 +372,11 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         mock_find_and_parse.assert_not_called()
+        mock_gapgu.assert_not_called()
 
+    @patch("api.extract_ownership_history_from_pdf")
     @patch("api.find_and_parse_summary_page")
-    def test_empty_upload_is_rejected(self, mock_find_and_parse):
+    def test_empty_upload_is_rejected(self, mock_find_and_parse, mock_gapgu):
         response = client.post(
             "/registry/upload",
             files={"file": ("등기부등본.pdf", b"", "application/pdf")},
@@ -321,6 +384,7 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         mock_find_and_parse.assert_not_called()
+        mock_gapgu.assert_not_called()
 
 
 class TestUnhandledExceptionHandling(unittest.TestCase):

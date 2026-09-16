@@ -11,17 +11,31 @@ from fraud_pattern_rules import detect_new_villa_recent_ownership_change
 class TestNewVillaRecentOwnershipChange(unittest.TestCase):
 
     def test_triggered_new_building_and_recent_transfer(self):
+        history = [
+            {"date": "2024-03-15", "ownerName": "건축주"},
+            {"date": "2024-08-01", "ownerName": "무자력자"},  # 승인 후 5개월, 이전 후 얼마 안 됨
+        ]
         result = detect_new_villa_recent_ownership_change(
             use_approval_date="20240301",
-            ownership_history=[
-                {"date": "2024-03-15", "ownerName": "건축주"},
-                {"date": "2024-08-01", "ownerName": "무자력자"},  # 승인 후 5개월, 이전 후 얼마 안 됨
-            ],
+            ownership_history=history,
             as_of=date(2024, 9, 1),
         )
         self.assertTrue(result["triggered"])
         self.assertTrue(result["isNewBuilding"])
         self.assertTrue(result["isRecentOwnershipChange"])
+        # 프론트(Step3Result)가 소유권 변동 타임라인을 그리는 데 쓰는 필드 — 입력을
+        # 그대로/가공해 돌려주는 것뿐이라 판정 로직과 별개로 계약을 고정해둔다.
+        self.assertEqual(result["ownershipHistory"], history)
+        self.assertEqual(result["latestTransferDate"], "2024-08-01")
+
+    def test_not_triggered_has_no_latest_transfer_date_without_history(self):
+        result = detect_new_villa_recent_ownership_change(
+            use_approval_date="20240301",
+            ownership_history=[],
+            as_of=date(2024, 9, 1),
+        )
+        self.assertIsNone(result["latestTransferDate"])
+        self.assertEqual(result["ownershipHistory"], [])
 
     def test_not_triggered_old_building(self):
         result = detect_new_villa_recent_ownership_change(

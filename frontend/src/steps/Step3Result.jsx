@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import ScreenShell from '../components/ScreenShell'
-import { GradeIcon, IconChevronDown } from '../components/icons'
+import { GradeIcon, IconChevronDown, IconAlertTriangle } from '../components/icons'
 import PossessionTimeline from '../components/PossessionTimeline'
+import OwnershipTimeline from '../components/OwnershipTimeline'
 import { GRADE_META, RISK_BADGE, RISK_LABEL } from '../lib/grade'
 import { formatManwonAsKRW, formatKRW } from '../lib/format'
 
@@ -39,8 +40,42 @@ function splitReason(text) {
   return { label: text.slice(0, idx), detail: text.slice(idx + 3) }
 }
 
+const FRAUD_ACTION_STEPS = [
+  {
+    title: '계약 잠정 보류 및 이전 계약서 요구',
+    body: '중개사에게 "직전 소유권 이전 당시의 매매계약서" 또는 "실제 거래 금액 확인원"을 보여달라고 요구하세요. 신축 분양가보다 전세 보증금이 더 높거나 같다면(깡통전세 위험), 계약을 즉시 중단해야 합니다.',
+  },
+  {
+    title: '국세·지방세 완납증명서 즉시 확인',
+    body: '바지사장 명의 변경 패턴은 임대인의 세금 체납으로 건물이 압류될 확률이 높습니다. 계약서 특약에 "잔금일 익일까지 임대인의 세금 체납이 발견되거나 소유권이 변경되면 계약은 무효로 하고 배액배상한다"는 문구를 넣으세요.',
+  },
+  {
+    title: '주변 매매 시세 직접 발품 팔기',
+    body: '신축 빌라는 감정평가액이 부풀려지기 쉽습니다. 앱의 추정 시세 외에 인근 공인중개사 3곳 이상을 직접 방문해 "이 동네 신축 빌라 진짜 매매 시세"를 교차 검증하세요.',
+  },
+]
+
+function FraudActionPlan() {
+  return (
+    <div className="flex flex-col gap-2.5 rounded-xl border border-gray-200 bg-white p-3.5">
+      <div className="text-xs font-bold text-gray-900">💡 위험을 피하기 위한 3단계 즉시 행동 가이드</div>
+      {FRAUD_ACTION_STEPS.map((s, i) => (
+        <div key={i} className="flex gap-2.5">
+          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-white">
+            {i + 1}
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <div className="text-[12.5px] font-bold text-gray-900">{s.title}</div>
+            <div className="text-[11.5px] leading-relaxed text-gray-600">{s.body}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function Step3Result({ result, onRestart }) {
-  const [expanded, setExpanded] = useState({})
+  const [expanded, setExpanded] = useState(() => ({ fraud: !!result.fraudPatternResult?.triggered }))
   const toggle = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
 
   const meta = GRADE_META[result.overallGrade] ?? GRADE_META.error
@@ -53,6 +88,10 @@ export default function Step3Result({ result, onRestart }) {
   const priorityRepayment = result.tenancySafety?.minimumPriorityRepayment
   const fraud = result.fraudPatternResult
   const tax = result.taxClearanceResult
+
+  // 사기 패턴 단독으로는 항상 warning이지만(overall_safety_assessment.py), 다른 위험
+  // 신호와 겹쳐 최종 등급이 danger까지 올라간 경우엔 헤드라인도 그에 맞춰 escalate한다.
+  const fraudSeverity = result.overallGrade === 'danger' ? 'danger' : 'warning'
 
   const confidence = property ? CONFIDENCE_META[property.marketPriceConfidence] ?? CONFIDENCE_META.unavailable : null
   const flags = []
@@ -79,6 +118,24 @@ export default function Step3Result({ result, onRestart }) {
             {meta.label}
           </div>
         </div>
+
+        {fraud?.triggered && (
+          <div
+            className={`flex items-start gap-2.5 rounded-2xl border p-4 ${
+              fraudSeverity === 'danger' ? 'border-red-200 bg-red-50' : 'border-orange-200 bg-orange-50'
+            }`}
+          >
+            <IconAlertTriangle size={20} className={`mt-0.5 shrink-0 ${fraudSeverity === 'danger' ? 'text-red-600' : 'text-orange-600'}`} />
+            <div className="flex flex-col gap-1">
+              <div className={`text-[15px] font-extrabold ${fraudSeverity === 'danger' ? 'text-red-700' : 'text-orange-700'}`}>
+                ⚠️ 전형적인 전세사기 의심 패턴 감지
+              </div>
+              <div className="text-[12.5px] leading-relaxed text-gray-700">
+                신축 빌라(사용승인 1년 이내) + 최근 소유권 변경 이력이 함께 확인되었습니다. 아래 "사기 패턴 탐지" 항목의 타임라인과 행동 가이드를 꼭 확인하세요.
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col gap-3">
           <div className="text-[13px] font-bold text-gray-900">판단 근거</div>
@@ -213,7 +270,26 @@ export default function Step3Result({ result, onRestart }) {
               badgeLabel={fraud ? (fraud.triggered ? '패턴 의심' : '해당 없음') : '판별 불가'}
               badgeClass={fraud ? (fraud.triggered ? RISK_BADGE.warning : RISK_BADGE.safe) : RISK_BADGE.unknown}
               summary={fraud ? fraud.reason : '건축물대장 정보를 확인하지 못해 판별할 수 없습니다.'}
-              detail={fraud ? fraud.reason : '건축물대장 조회가 실패했거나 사용승인일 정보가 없어 신축빌라 패턴을 판별하지 못했습니다.'}
+              detail={
+                fraud ? (
+                  <div className="flex flex-col gap-3">
+                    <div>{fraud.reason}</div>
+                    {fraud.triggered && (
+                      <>
+                        <OwnershipTimeline
+                          useApprovalDate={property?.building?.useApprovalDate}
+                          ownershipHistory={fraud.ownershipHistory}
+                          suspiciousDate={fraud.latestTransferDate}
+                          contractDate={gapRisk?.moveInDate}
+                        />
+                        <FraudActionPlan />
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  '건축물대장 조회가 실패했거나 사용승인일 정보가 없어 신축빌라 패턴을 판별하지 못했습니다.'
+                )
+              }
               expanded={!!expanded.fraud}
               onToggle={() => toggle('fraud')}
             />

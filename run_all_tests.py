@@ -18,7 +18,7 @@ if __name__ == "__main__":
     result = runner.run(suite)
 
     print("\n" + "=" * 60)
-    print(f"총 {result.testsRun}개 테스트 실행 — "
+    print(f"총 {result.testsRun}개 테스트 실행 - "
           f"성공 {result.testsRun - len(result.failures) - len(result.errors)}, "
           f"실패 {len(result.failures)}, 에러 {len(result.errors)}")
     print("=" * 60)

@@ -52,6 +52,7 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
           activeRights: result.activeRights,
           totalSeniorSecuredAmount: result.totalSeniorSecuredAmount,
           sourcePage: result.sourcePage,
+          ownershipHistory: result.ownershipHistory,
         },
       }))
     } catch (err) {
@@ -208,6 +209,21 @@ export default function Step2Documents({ documents, onChange, onSubmit, submitti
                   </div>
                 ))}
               </div>
+
+              {documents.registryPreview.ownershipHistory?.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-gray-700">
+                    갑구 소유권 이전 이력 <span className="font-normal text-gray-400">(자동 인식, 오래된 순)</span>
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {documents.registryPreview.ownershipHistory.map((h, i) => (
+                      <span key={i} className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] text-amber-700">
+                        {h.date || '날짜 미상'} · {h.ownerName}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center justify-between border-t border-dashed border-gray-300 pt-2">
                 <span className="text-[12.5px] font-semibold text-gray-700">선순위채권 합계</span>

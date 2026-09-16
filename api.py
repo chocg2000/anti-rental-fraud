@@ -43,11 +43,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from full_assessment import run_full_assessment
 from registry_summary_ocr import find_and_parse_summary_page
+from registry_gapgu_ocr import extract_ownership_history_from_pdf
 from assessment_store import save_assessment, get_assessment as get_stored_assessment
 
 logger = logging.getLogger(__name__)
 
 MAX_REGISTRY_UPLOAD_BYTES = 15 * 1024 * 1024  # 스캔본 PDF 기준 여유있는 상한선
+
+# B2C 무료 버전 비용 방어 스위치. registry_gapgu_ocr.py는 CLOVA_OCR_* 키가 없으면 이미
+# no-op으로 빠지지만, 이 플래그는 그것과 별개의 명시적 이중 안전장치다 — 배포 서버에 키가
+# 실수로/테스트 목적으로 세팅돼 있어도 B2C 배포에서는 이 값이 false인 한 클로바 API가
+# 절대 호출되지 않는다. 나중에 B2B(전문가용) 버전을 띄울 때만 true로 전환한다.
+USE_CLOVA_OCR = os.environ.get("USE_CLOVA_OCR", "false").strip().lower() == "true"
 
 app = FastAPI(
     title="전세/월세 사기 방지 안전진단 API",
@@ -132,6 +139,13 @@ class RegistryUploadResponse(BaseModel):
     owners: list[dict[str, Any]]
     activeRights: list[dict[str, Any]]
     totalSeniorSecuredAmount: int
+    ownershipHistory: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="갑구 본문 OCR(네이버 클로바)로 뽑아낸 소유권 이전 이력. "
+                    "USE_CLOVA_OCR=false(B2C 기본값)이거나 클로바 키가 없으면 항상 빈 리스트 — "
+                    "유저가 화면에서 확인/수정한 뒤 그대로 /assessment의 ownership_history로 "
+                    "다시 보내면 사기 패턴 판별에 쓰인다.",
+    )
 
 
 @app.exception_handler(Exception)
@@ -214,6 +228,12 @@ def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
     find_and_parse_summary_page()가 요약 페이지를 못 찾으면 RuntimeError를 던지는데,
     이건 서버 버그가 아니라 "이 PDF엔 요약 페이지가 없거나 인식이 안 됐다"는 사용자
     입력 문제이므로 500이 아니라 400으로 변환해서 되돌려준다.
+
+    요약 페이지 파싱에 이어, USE_CLOVA_OCR=true일 때만 클로바 OCR로 갑구 본문(소유권 이전
+    이력)도 시도한다 (registry_gapgu_ocr.py 참고). B2C 배포 기본값(false)에서는 이 호출
+    자체를 건너뛰어 ownershipHistory를 항상 빈 리스트로 반환한다 — 클로바 키가 없어도
+    조용히 빈 리스트로 빠지는 것과 별개로, 비용이 드는 API 호출을 원천 차단하기 위함이다.
+    이 단계가 꺼져 있거나 실패해도 요약 페이지 파싱 결과 자체는 그대로 반환된다.
     """
     if not _is_pdf_upload(file):
         raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
@@ -234,6 +254,12 @@ def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
             tmp_path = tmp.name
 
         result = find_and_parse_summary_page(tmp_path)
+        if USE_CLOVA_OCR:
+            gapgu_result = extract_ownership_history_from_pdf(
+                tmp_path, exclude_pages={result["_sourcePage"]}
+            )
+        else:
+            gapgu_result = {"ownershipHistory": [], "pagesProcessed": 0, "pagesFailed": []}
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
@@ -246,4 +272,5 @@ def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
         "owners": result["owners"],
         "activeRights": result["activeRights"],
         "totalSeniorSecuredAmount": result["totalSeniorSecuredAmount"],
+        "ownershipHistory": gapgu_result["ownershipHistory"],
     }
