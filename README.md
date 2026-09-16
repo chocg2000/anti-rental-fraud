@@ -938,12 +938,15 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
    추가하고, `Dockerfile`의 uvicorn 실행에 `--proxy-headers
    --forwarded-allow-ips=*`를 추가해 그 헤더를 신뢰하도록 했다.
    ⚠️ **이 신뢰(`forwarded-allow-ips=*`)가 안전하려면 backend 컨테이너에
-   nginx만 도달할 수 있어야 한다** — 지금 `docker-compose.yml`은
+   nginx만 도달할 수 있어야 한다** — ~~지금 `docker-compose.yml`은
    `backend.ports: ["8000:8000"]`로 호스트에도 직접 노출돼 있어서, 이 상태로는
    누구나 백엔드를 nginx 없이 직접 두드리면서 `X-Forwarded-For`를 위조해 rate
-   limit을 우회할 수 있다. **다음 세션에서 결정할 것**: 이 포트 매핑을 없애서
-   (로컬에서 `:8000/docs`로 직접 접근하는 편의는 잃되) 이 구멍을 막을지, 아니면
-   지금은 감수하고 넘어갈지.
+   limit을 우회할 수 있다.~~ → **같은 날 바로 후속 조치 완료.** `backend.ports`를
+   `expose: ["8000"]`로 바꿔 호스트에는 포트를 아예 안 열고 컴포즈 내부 네트워크
+   에서만 접근 가능하게 했다 — frontend(nginx)는 어차피 컴포즈 내부 DNS
+   (`http://backend:8000`)로 접속하므로 서비스는 그대로 동작한다(`docker compose
+   config`로 검증). 로컬에서 `:8000/docs`로 직접 접근하던 편의는 이제 없다 —
+   필요하면 `docker compose exec backend curl ...`로 확인할 것.
 
 회귀 테스트: `test_rate_limiter.py`(신규, 5개) + `test_api.py`에 429 동작 확인
 테스트 3개 추가, 기존 `/assessment`·`/registry/upload`를 여러 번 호출하는 테스트
