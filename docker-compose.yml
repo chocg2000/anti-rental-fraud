@@ -1,8 +1,17 @@
 services:
   backend:
     build: .
-    ports:
-      - "8000:8000"
+    # 2026-09-16 보안 점검: 호스트에 직접 포트를 열면(ports) nginx를 거치지 않고 누구나
+    # 백엔드를 바로 두드릴 수 있다 — 그러면 Dockerfile의 --forwarded-allow-ips='*'가
+    # 신뢰하는 X-Forwarded-For를 공격자가 마음대로 조작해 rate_limiter.py의 IP 기반
+    # 제한을 무력화할 수 있다. expose는 호스트에 포트를 열지 않고 컴포즈 내부 네트워크
+    # 에서만 접근을 허용한다 — frontend(nginx)는 어차피 호스트 포트가 아니라 컴포즈
+    # 내부 DNS(http://backend:8000)로 접속하므로 서비스 동작에는 영향이 없다. 로컬에서
+    # http://localhost:8000/docs로 직접 접근하던 편의는 이제 없다 — 필요하면
+    # `docker compose exec backend curl ...`이나 `docker compose port backend 8000`으로
+    # 확인할 것.
+    expose:
+      - "8000"
     environment:
       # docker-compose가 이 파일과 같은 폴더의 .env를 읽어 ${...} 치환에 쓴다(컨테이너에
       # .env 전체를 주입하는 게 아님 — 그래서 TESSERACT_CMD 같은 Windows 로컬 전용 경로가
