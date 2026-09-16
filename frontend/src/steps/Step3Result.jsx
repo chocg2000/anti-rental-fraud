@@ -305,6 +305,18 @@ export default function Step3Result({ result, onRestart }) {
             />
           </div>
         )}
+
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-xs leading-relaxed text-gray-500">
+          <p>
+            본 진단 결과는 국토교통부, 대법원 등기부 정보, 카카오 API 등 공공 데이터를 기반으로 산출된 참고용 데이터이며, 어떠한 법적 효력도 가지지 않습니다.
+          </p>
+          <p className="mt-2">
+            실제 부동산 계약 시에는 반드시 공인중개사, 변호사 등 전문가와 상의하시기 바라며, 본 서비스는 유저의 계약 선택이나 그로 인해 발생하는 어떠한 재산상 손실에도 법적 책임을 지지 않습니다.
+          </p>
+          <p className="mt-2">
+            데이터 수집 시점과 실제 계약 시점의 미세한 시차로 인해 실제 권리 관계와 차이가 발생할 수 있습니다.
+          </p>
+        </div>
       </div>
     </ScreenShell>
   )

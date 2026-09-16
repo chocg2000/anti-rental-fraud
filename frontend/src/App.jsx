@@ -14,6 +14,7 @@ const initialForm = {
   contractLandlordName: '',
   propertyType: 'villa',
   moveInDate: '',
+  privacyConsent: false,
 }
 
 const initialDocuments = {
@@ -33,7 +34,8 @@ function isStep1Complete(form) {
     form.address.trim() !== '' &&
     Number(form.targetArea) > 0 &&
     Number(form.myDeposit) > 0 &&
-    form.contractLandlordName.trim() !== ''
+    form.contractLandlordName.trim() !== '' &&
+    form.privacyConsent === true
   )
 }
 

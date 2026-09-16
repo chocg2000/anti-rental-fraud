@@ -33,7 +33,8 @@ export default function Step1Address({ form, onChange, onNext }) {
     form.address.trim() !== '' &&
     Number(form.targetArea) > 0 &&
     Number(form.myDeposit) > 0 &&
-    form.contractLandlordName.trim() !== ''
+    form.contractLandlordName.trim() !== '' &&
+    form.privacyConsent === true
 
   return (
     <>
@@ -159,6 +160,34 @@ export default function Step1Address({ form, onChange, onNext }) {
                 </button>
               )
             })}
+          </div>
+        </div>
+
+        {/*
+          ⚠️ 개인정보 수집·이용 동의 UI — 아래 안내 문구는 자리표시자(placeholder)입니다.
+          실제 수집 항목/목적/보유기간/제3자 제공 여부는 서비스 운영 방식이 확정된 뒤
+          법률 검토를 거쳐 반드시 교체해야 합니다. 이 상태로 실서비스에 배포하지 마세요.
+        */}
+        <div className="flex flex-col gap-2 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-3.5">
+          <label className="flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={form.privacyConsent === true}
+              onChange={(e) => {
+                const checked = e.target.checked
+                onChange((prev) => ({ ...prev, privacyConsent: checked }))
+              }}
+              className="mt-0.5 h-4 w-4 shrink-0"
+            />
+            <span className="text-[13px] font-semibold text-gray-800">
+              개인정보 수집·이용에 동의합니다 <span className="text-red-600">(필수)</span>
+            </span>
+          </label>
+          <div className="text-[11px] leading-relaxed text-amber-700">
+            [placeholder — 법률 검토 필요] 수집 항목: 주소, 전용면적, 보증금, 임대인 이름,
+            (선택) 등기부등본 PDF. 수집 목적: 전세/월세 안전진단 결과 산출. 이 문구는
+            임시 자리표시자이며, 실제 수집·이용 목적/보유기간/제3자 제공 여부를 반영한
+            정식 개인정보처리방침으로 반드시 교체해야 합니다.
           </div>
         </div>
       </div>
