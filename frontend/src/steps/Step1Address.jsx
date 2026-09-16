@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import ScreenShell from '../components/ScreenShell'
 import AddressSearchModal from '../components/AddressSearchModal'
+import { useNoIndex } from '../lib/seo'
 
 // <input type="date">가 min/max 없이 손으로 빠르게 타이핑하면 연도 칸에 자릿수가
 // 밀려 들어가는(예: "202609") 브라우저 버그가 있다 — 범위를 지정하면 해당 칸의
@@ -17,6 +18,7 @@ const PROPERTY_TYPES = [
 ]
 
 export default function Step1Address({ form, onChange, onNext }) {
+  useNoIndex()
   const [searchOpen, setSearchOpen] = useState(false)
 
   const set = (key) => (e) => {

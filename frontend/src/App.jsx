@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import Landing from './pages/Landing'
 import Step1Address from './steps/Step1Address'
 import Step2Documents from './steps/Step2Documents'
 import ResultRoute from './routes/ResultRoute'
@@ -128,7 +129,7 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/step1" replace />} />
+      <Route path="/" element={<Landing />} />
       <Route path="/step1" element={<Step1Address form={form} onChange={setForm} onNext={() => navigate('/step2')} />} />
       <Route
         path="/step2"

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ⚠️ 배포 도메인이 확정되면 아래 loc을 실제 도메인으로 교체할 것.
+     /step1, /step2, /result/:id는 폼/개인 결과 페이지라 의도적으로 제외했다
+     (frontend/public/robots.txt, src/lib/seo.js의 useNoIndex 참고). -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://example.com/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

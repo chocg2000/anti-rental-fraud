@@ -3,6 +3,7 @@ import ScreenShell from '../components/ScreenShell'
 import Toast from '../components/Toast'
 import { IconAlertTriangle, IconInfoCircle, IconUploadCloud, IconSpinner, IconCheckCircle } from '../components/icons'
 import { uploadRegistryPdf } from '../lib/api'
+import { useNoIndex } from '../lib/seo'
 
 const VIOLATION_OPTIONS = [
   { id: 'clean', label: '위반건축물 아님' },
@@ -26,6 +27,7 @@ const today = new Date().toISOString().slice(0, 10)
 const MIN_TAX_ISSUE_DATE = `${new Date().getFullYear() - 5}-01-01`
 
 export default function Step2Documents({ documents, onChange, onSubmit, submitting, submitError, onDismissSubmitError }) {
+  useNoIndex()
   const fileInputRef = useRef(null)
   const toastMessage = documents.uploadError || submitError
 

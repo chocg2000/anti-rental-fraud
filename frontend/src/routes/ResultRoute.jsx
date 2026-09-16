@@ -4,10 +4,14 @@ import ScreenShell from '../components/ScreenShell'
 import { IconSpinner } from '../components/icons'
 import Step3Result from '../steps/Step3Result'
 import { getAssessment } from '../lib/api'
+import { useNoIndex } from '../lib/seo'
 
 // /result/:id — POST /assessment 직후엔 location.state로 넘겨받은 결과를 바로 쓰고(빠른 경로),
 // 새로고침되거나 링크를 통해 곧장 열린 경우엔 GET /assessment/:id로 다시 불러온다.
 export default function ResultRoute({ onRestart }) {
+  // 개인 진단 결과(주소·보증금 등)가 담긴 페이지라 검색엔진에 노출되면 안 된다 —
+  // 링크를 아는 사람만 봐야 하는 비공개 성격의 페이지.
+  useNoIndex()
   const { id } = useParams()
   const location = useLocation()
   const passedResult = location.state?.result

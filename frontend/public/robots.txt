@@ -1,0 +1,10 @@
+# /step1, /step2, /result/:id는 robots.txt로 크롤링 자체를 막지 않는다 — 그러면
+# 크롤러가 <meta name="robots" content="noindex">를 볼 기회조차 없어져서, 다른 곳에서
+# 링크만 걸려도 스니펫 없는 URL로 색인될 수 있다(구글 공식 가이드). 대신 각 페이지가
+# 직접 noindex를 선언한다(src/lib/seo.js의 useNoIndex 참고) — robots.txt는 크롤링
+# 허용만 관리한다.
+User-agent: *
+Allow: /
+
+# ⚠️ 배포 도메인이 확정되면 아래 URL을 실제 도메인으로 교체할 것.
+Sitemap: https://example.com/sitemap.xml
