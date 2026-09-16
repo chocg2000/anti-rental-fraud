@@ -45,10 +45,22 @@ from full_assessment import run_full_assessment
 from registry_summary_ocr import find_and_parse_summary_page
 from registry_gapgu_ocr import extract_ownership_history_from_pdf
 from assessment_store import save_assessment, get_assessment as get_stored_assessment
+from rate_limiter import is_rate_limited
 
 logger = logging.getLogger(__name__)
 
 MAX_REGISTRY_UPLOAD_BYTES = 15 * 1024 * 1024  # 스캔본 PDF 기준 여유있는 상한선
+
+# 회원가입/로그인이 없는 B2C 무료 버전이라 유저를 구분할 단서가 IP뿐이다 — 봇이
+# 반복 호출하면 외부 API(카카오/국토부/VWorld) 쿼터가 먼저 소진되거나 서버가
+# 느려져 정상 유저가 피해를 본다(OWASP API4:2023). /assessment는 쿼터 소모형,
+# /registry/upload는 CPU 집약적(tesseract/poppler)이라 더 타이트하게 잠근다.
+RATE_LIMIT_ASSESSMENT_PER_MINUTE = 5
+RATE_LIMIT_REGISTRY_UPLOAD_PER_MINUTE = 3
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
 # B2C 무료 버전 비용 방어 스위치. registry_gapgu_ocr.py는 CLOVA_OCR_* 키가 없으면 이미
 # no-op으로 빠지지만, 이 플래그는 그것과 별개의 명시적 이중 안전장치다 — 배포 서버에 키가
@@ -201,13 +213,22 @@ def health_check() -> dict:
 
 
 @app.post("/assessment", response_model=AssessmentResponse)
-def create_assessment(payload: AssessmentRequest) -> dict:
+def create_assessment(payload: AssessmentRequest, request: Request) -> dict:
     """
     run_full_assessment()를 그대로 호출한다 (블로킹 I/O라 async def가 아닌 일반 def로 선언 —
     FastAPI가 스레드풀에서 실행해준다). 주소 정규화 실패 등 예상된 실패는
     run_full_assessment 내부에서 이미 overallGrade="error"로 처리되므로 여기서는
     별도 try/except 없이 그대로 반환하고, 예상 밖의 예외만 위 전역 핸들러가 받는다.
+
+    카카오/국토부/VWorld 쿼터를 소모하므로 IP당 분당 호출 횟수를 제한한다
+    (rate_limiter.py 참고).
     """
+    if is_rate_limited(_client_ip(request), "assessment", RATE_LIMIT_ASSESSMENT_PER_MINUTE):
+        raise HTTPException(
+            status_code=429,
+            detail="요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+        )
+
     tax_clearance = payload.tax_clearance.model_dump() if payload.tax_clearance else None
     ownership_history = (
         [entry.model_dump() for entry in payload.ownership_history]
@@ -266,7 +287,7 @@ def _is_pdf_upload(file: UploadFile) -> bool:
 
 
 @app.post("/registry/upload", response_model=RegistryUploadResponse)
-def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
+def upload_registry_pdf(request: Request, file: UploadFile = File(...)) -> dict:
     """
     등기부등본 PDF를 받아 '주요 등기사항 요약' 페이지를 찾아 OCR+파싱한 결과를 반환한다.
     이 엔드포인트는 진단을 실행하지 않는다 — 프론트가 registryOcrText를 화면에 보여주고
@@ -282,16 +303,35 @@ def upload_registry_pdf(file: UploadFile = File(...)) -> dict:
     자체를 건너뛰어 ownershipHistory를 항상 빈 리스트로 반환한다 — 클로바 키가 없어도
     조용히 빈 리스트로 빠지는 것과 별개로, 비용이 드는 API 호출을 원천 차단하기 위함이다.
     이 단계가 꺼져 있거나 실패해도 요약 페이지 파싱 결과 자체는 그대로 반환된다.
+
+    CPU 집약적(tesseract/poppler)이라 /assessment보다 더 타이트하게 IP당 분당 호출
+    횟수를 제한한다(rate_limiter.py 참고).
     """
+    if is_rate_limited(_client_ip(request), "registry_upload", RATE_LIMIT_REGISTRY_UPLOAD_PER_MINUTE):
+        raise HTTPException(
+            status_code=429,
+            detail="요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+        )
+
     if not _is_pdf_upload(file):
         raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
 
-    content = file.file.read()
-    if len(content) > MAX_REGISTRY_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"파일이 너무 큽니다 (최대 {MAX_REGISTRY_UPLOAD_BYTES // (1024 * 1024)}MB).",
-        )
+    # 전체를 다 읽은 뒤에야 크기를 확인하면, 큰 파일을 반복 전송하는 것만으로 디스크/
+    # 메모리를 소모시키는 자원 고갈 공격(OWASP API4:2023)에 노출된다 — 청크 단위로
+    # 읽으면서 상한을 넘는 즉시 중단한다.
+    chunk_size = 1024 * 1024
+    content = bytearray()
+    while True:
+        chunk = file.file.read(chunk_size)
+        if not chunk:
+            break
+        content.extend(chunk)
+        if len(content) > MAX_REGISTRY_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"파일이 너무 큽니다 (최대 {MAX_REGISTRY_UPLOAD_BYTES // (1024 * 1024)}MB).",
+            )
+    content = bytes(content)
     if not content:
         raise HTTPException(status_code=400, detail="빈 파일입니다.")
 

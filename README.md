@@ -904,6 +904,52 @@ vworld.kr API 서버 자체가 이 개발 머신(싱가포르 IP)에서 계속 �
 했다. 회귀 테스트 8개 추가(`registry_parser`/`registry_gapgu_ocr`/`full_assessment`/`api`
 각 계층), 백엔드 전체 318개 테스트 통과.
 
+### ✅ OWASP Top 10 기준 보안 점검 (2026-09-16 밤)
+
+유저 요청으로 실제 코드베이스를 OWASP 관점에서 훑었다. 이미 괜찮았던 것: SQL
+인젝션(SQLite 전부 파라미터 바인딩), 커맨드 인젝션(subprocess 전부 리스트 인자,
+`shell=True` 없음), 비밀키 관리(`.env` git 히스토리에 커밋된 적 없음), 외부 API
+호출 전부 `timeout` 명시, 예외 노출(전역 핸들러가 스택트레이스 대신 일반 메시지로
+치환), ID 추측(uuid4 128비트), Pydantic `extra="forbid"`, stored XSS
+(`dangerouslySetInnerHTML` 없음). 아래는 실제로 찾아서 고친 것들.
+
+1. **[기능이 실제로 깨져 있던 버그] nginx `client_max_body_size` 미설정.** 기본값
+   1MB인데 백엔드는 15MB PDF 업로드를 허용 — **실제 Docker 배포에서는 등기부 PDF
+   업로드가 nginx 단계에서 413으로 막혀 애초에 동작하지 않았을 것이다.**
+   `frontend/nginx.conf`에 `client_max_body_size 16m;` 추가.
+2. **[OWASP API4:2023 Unrestricted Resource Consumption] 업로드 크기 체크가
+   파일을 전부 읽은 "다음"에 일어남.** `api.py`의 `upload_registry_pdf()`가
+   `file.file.read()`로 전체를 읽은 뒤에야 `MAX_REGISTRY_UPLOAD_BYTES` 초과 여부를
+   확인했다 — 큰 파일을 반복 전송하면 디스크/CPU를 미리 소모시킬 수 있다. 1MB
+   청크로 읽으면서 상한을 넘는 즉시 중단하도록 변경.
+3. **[OWASP API4:2023] 모든 엔드포인트에 rate limiting이 전혀 없었음.** 회원가입/
+   로그인이 없는 B2C 무료 버전이라 유저 구분 단서가 IP뿐 — `/assessment`(카카오/
+   국토부/VWorld 쿼터 소모)와 `/registry/upload`(tesseract/poppler CPU 집약적) 둘
+   다 무제한 반복 호출이 가능했다. 새 모듈 `rate_limiter.py`(인메모리 슬라이딩
+   윈도우, IP+엔드포인트별 독립 카운터)로 `/assessment`는 IP당 분당 5회,
+   `/registry/upload`는 IP당 분당 3회로 제한(429 반환). Redis 없이 프로세스 메모리
+   dict로 구현 — 이 프로젝트가 아직 단일 워커 프로토타입이라는 전제는
+   `assessment_store.py`(SQLite)와 동일. 여러 워커로 스케일하면 워커마다 카운터가
+   따로 놀아 실질 허용량이 워커 수만큼 늘어나므로, 그때는 Redis로 옮겨야 한다.
+4. **[3번을 실제로 작동시키기 위한 필수 후속 조치] `request.client.host`가 nginx
+   뒤에서는 실제 클라이언트 IP가 아니라 nginx 컨테이너의 IP로 잡히는 문제.** 고치지
+   않으면 rate limit이 "사이트 전체에 분당 N회"가 돼버려 사실상 무의미해진다.
+   `nginx.conf`에 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`
+   추가하고, `Dockerfile`의 uvicorn 실행에 `--proxy-headers
+   --forwarded-allow-ips=*`를 추가해 그 헤더를 신뢰하도록 했다.
+   ⚠️ **이 신뢰(`forwarded-allow-ips=*`)가 안전하려면 backend 컨테이너에
+   nginx만 도달할 수 있어야 한다** — 지금 `docker-compose.yml`은
+   `backend.ports: ["8000:8000"]`로 호스트에도 직접 노출돼 있어서, 이 상태로는
+   누구나 백엔드를 nginx 없이 직접 두드리면서 `X-Forwarded-For`를 위조해 rate
+   limit을 우회할 수 있다. **다음 세션에서 결정할 것**: 이 포트 매핑을 없애서
+   (로컬에서 `:8000/docs`로 직접 접근하는 편의는 잃되) 이 구멍을 막을지, 아니면
+   지금은 감수하고 넘어갈지.
+
+회귀 테스트: `test_rate_limiter.py`(신규, 5개) + `test_api.py`에 429 동작 확인
+테스트 3개 추가, 기존 `/assessment`·`/registry/upload`를 여러 번 호출하는 테스트
+클래스들은 매 테스트 전에 rate limiter를 리셋하는 `ResetRateLimiterMixin` 추가.
+백엔드 전체 326개 테스트 통과.
+
 ### ✅ 2026-09-15 밤 세션에서 마지막 2개 외부 리소스 과제 전부 해결
 
 지인이 NCP(네이버클라우드플랫폼) 한국 리전 서버(211.233.216.8, `yongtiger.pem`)와

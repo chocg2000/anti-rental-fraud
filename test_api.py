@@ -11,7 +11,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+import api
 import assessment_store
+import rate_limiter
 from api import app
 from property_aggregator import PropertyAggregationError
 
@@ -27,6 +29,19 @@ def setUpModule():
 
 def tearDownModule():
     assessment_store.reset_for_testing()
+
+
+class ResetRateLimiterMixin:
+    """
+    /assessment·/registry/upload는 이제 IP당 분당 호출 횟수 제한이 걸려있다
+    (rate_limiter.py). TestClient는 매 요청이 항상 같은 "IP"로 잡히므로, 이 두
+    엔드포인트를 여러 번 호출하는 테스트 클래스는 매 테스트 전에 카운터를 리셋해야
+    다른 테스트의 호출 횟수가 누적돼 엉뚱하게 429를 맞는 걸 피할 수 있다.
+    """
+
+    def setUp(self):
+        rate_limiter.reset_for_testing()
+        super().setUp()
 
 YATAP_REGISTRY_OCR_TEXT = """주요 등기사항 요약 (참고용)
 고유번호 1356-1996-092460
@@ -74,7 +89,7 @@ class TestHealthCheck(unittest.TestCase):
         self.assertEqual(response.json(), {"status": "ok"})
 
 
-class TestRequestValidation(unittest.TestCase):
+class TestRequestValidation(ResetRateLimiterMixin, unittest.TestCase):
 
     def test_missing_required_field_is_422(self):
         payload = minimal_payload()
@@ -96,7 +111,7 @@ class TestRequestValidation(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
 
-class TestAssessmentEndpoint(unittest.TestCase):
+class TestAssessmentEndpoint(ResetRateLimiterMixin, unittest.TestCase):
 
     @patch("full_assessment.get_property_info")
     def test_minimal_request_without_registry_returns_unknown_risk(self, mock_get_info):
@@ -286,7 +301,7 @@ class TestAssessmentEndpoint(unittest.TestCase):
         self.assertIsNone(body["propertyInfo"])
 
 
-class TestAssessmentResultRetrieval(unittest.TestCase):
+class TestAssessmentResultRetrieval(ResetRateLimiterMixin, unittest.TestCase):
     """
     POST /assessment가 저장한 결과를 GET /assessment/{id}로 다시 꺼내오는지 검증.
     프론트가 결과 화면을 /result/:id로 라우팅해서 새로고침/링크공유에도 버티게 하려는 목적.
@@ -311,7 +326,7 @@ class TestAssessmentResultRetrieval(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
 
-class TestRegistryUploadEndpoint(unittest.TestCase):
+class TestRegistryUploadEndpoint(ResetRateLimiterMixin, unittest.TestCase):
     """
     실제 tesseract/poppler/클로바 호출 없이 find_and_parse_summary_page와
     extract_ownership_history_from_pdf를 모두 모킹해서 API 배선(파일 검증, 임시파일 처리,
@@ -471,7 +486,7 @@ class TestRegistryUploadEndpoint(unittest.TestCase):
         mock_gapgu.assert_not_called()
 
 
-class TestUnhandledExceptionHandling(unittest.TestCase):
+class TestUnhandledExceptionHandling(ResetRateLimiterMixin, unittest.TestCase):
 
     @patch("full_assessment.get_property_info")
     def test_unexpected_exception_returns_500_without_leaking_traceback(self, mock_get_info):
@@ -482,6 +497,63 @@ class TestUnhandledExceptionHandling(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertNotIn("RuntimeError", response.text)
         self.assertNotIn("Traceback", response.text)
+
+
+class TestRateLimiting(ResetRateLimiterMixin, unittest.TestCase):
+    """
+    2026-09-16 보안 점검: 회원가입/로그인이 없는 B2C 무료 버전이라 유저를 구분할 단서가
+    IP뿐이다. /assessment(카카오/국토부 쿼터 소모)와 /registry/upload(CPU 집약적 OCR)
+    둘 다 무제한 반복 호출을 막아야 한다(OWASP API4:2023). TestClient의 요청은 전부
+    같은 "IP"로 잡히므로, 여기서 걸어둔 한도를 그대로 초과시켜 429가 뜨는지 확인한다.
+    """
+
+    @patch("full_assessment.get_property_info")
+    def test_assessment_blocked_after_limit_exceeded(self, mock_get_info):
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+
+        for _ in range(api.RATE_LIMIT_ASSESSMENT_PER_MINUTE):
+            response = client.post("/assessment", json=minimal_payload())
+            self.assertEqual(response.status_code, 200)
+
+        response = client.post("/assessment", json=minimal_payload())
+        self.assertEqual(response.status_code, 429)
+
+    def test_registry_upload_blocked_after_limit_exceeded(self):
+        with patch("api.find_and_parse_summary_page") as mock_find:
+            mock_find.return_value = {
+                "owners": [], "activeRights": [], "totalSeniorSecuredAmount": 0,
+                "_sourcePage": 1, "_rawOcrText": "주요 등기사항 요약 (참고용) ...",
+            }
+            for _ in range(api.RATE_LIMIT_REGISTRY_UPLOAD_PER_MINUTE):
+                response = client.post(
+                    "/registry/upload",
+                    files={"file": ("등기부등본.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+                )
+                self.assertEqual(response.status_code, 200)
+
+            response = client.post(
+                "/registry/upload",
+                files={"file": ("등기부등본.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+            )
+        self.assertEqual(response.status_code, 429)
+
+    @patch("full_assessment.get_property_info")
+    def test_rate_limit_is_per_endpoint_not_shared(self, mock_get_info):
+        # /assessment 한도를 다 써도 /registry/upload는 별도 버킷이라 영향이 없어야 한다.
+        mock_get_info.return_value = BASE_PROPERTY_INFO
+        for _ in range(api.RATE_LIMIT_ASSESSMENT_PER_MINUTE):
+            client.post("/assessment", json=minimal_payload())
+
+        with patch("api.find_and_parse_summary_page") as mock_find:
+            mock_find.return_value = {
+                "owners": [], "activeRights": [], "totalSeniorSecuredAmount": 0,
+                "_sourcePage": 1, "_rawOcrText": "주요 등기사항 요약 (참고용) ...",
+            }
+            response = client.post(
+                "/registry/upload",
+                files={"file": ("등기부등본.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+            )
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":

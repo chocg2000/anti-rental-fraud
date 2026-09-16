@@ -20,4 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
 
 EXPOSE 8000
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+# --forwarded-allow-ips='*': nginx가 보내는 X-Forwarded-For를 신뢰해서 rate_limiter.py가
+# nginx 컨테이너 IP가 아니라 실제 클라이언트 IP로 제한을 걸게 한다(nginx.conf 참고).
+# '*'로 열어도 안전한 전제: docker-compose 네트워크 안에서 이 컨테이너에 직접 도달할 수
+# 있는 건 nginx뿐이어야 한다 — backend 서비스의 8000 포트를 호스트에 그대로 노출하면
+# 이 전제가 깨져서 누구나 X-Forwarded-For를 위조해 rate limit을 우회할 수 있게 되니
+# docker-compose.yml에서 backend의 ports 매핑을 없애는 것과 반드시 같이 가야 한다.
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
