@@ -24,6 +24,7 @@ POST /assessment는 계산한 결과를 id로 저장해두고 GET /assessment/{i
 문서: http://127.0.0.1:8000/docs (Swagger UI 자동 생성)
 """
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -31,6 +32,7 @@ import uuid
 from datetime import date
 from typing import Any, Literal
 
+import sentry_sdk
 from dotenv import load_dotenv
 
 # address_resolver.py가 모듈 로드 시점에 KAKAO_REST_API_KEY를 읽으므로,
@@ -44,10 +46,24 @@ from pydantic import BaseModel, ConfigDict, Field
 from full_assessment import run_full_assessment
 from registry_summary_ocr import find_and_parse_summary_page
 from registry_gapgu_ocr import extract_ownership_history_from_pdf
-from assessment_store import save_assessment, get_assessment as get_stored_assessment
+from assessment_store import (
+    cleanup_old_assessments,
+    save_assessment,
+    get_assessment as get_stored_assessment,
+)
 from rate_limiter import is_rate_limited
 
 logger = logging.getLogger(__name__)
+
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+SENTRY_ENVIRONMENT = os.environ.get("SENTRY_ENVIRONMENT", "development").strip() or "development"
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+    )
 
 MAX_REGISTRY_UPLOAD_BYTES = 15 * 1024 * 1024  # 스캔본 PDF 기준 여유있는 상한선
 
@@ -73,6 +89,36 @@ app = FastAPI(
     version="0.1.0",
     description="주소·계약조건·등기부 요약을 받아 위험 신호등 등급을 산출한다.",
 )
+
+
+async def _periodic_cleanup_expired_assessments() -> None:
+    """1시간마다 만료된 assessment를 정리하고, 운영 로그에 실제 삭제 건수를 남긴다."""
+    while True:
+        try:
+            deleted = cleanup_old_assessments(days=30)
+            logger.info("assessment cleanup: removed %s expired records from %s", deleted, os.environ.get("ASSESSMENT_DB_PATH", "data/assessments.db"))
+        except Exception:
+            logger.exception("assessment cleanup loop failed")
+        await asyncio.sleep(3600)
+
+
+@app.on_event("startup")
+async def cleanup_expired_assessments_on_startup() -> None:
+    """보관기간이 만료된 진단 결과를 제거해 개인정보 처리방침과 구현을 일치시킨다."""
+    deleted = cleanup_old_assessments(days=30)
+    logger.info("startup assessment cleanup: removed %s expired records", deleted)
+    app.state.cleanup_task = asyncio.create_task(_periodic_cleanup_expired_assessments())
+
+
+@app.on_event("shutdown")
+async def shutdown_cleanup_task() -> None:
+    task = getattr(app.state, "cleanup_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            logger.info("assessment cleanup loop cancelled")
 
 
 class TaxClearanceInput(BaseModel):

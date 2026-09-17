@@ -185,6 +185,10 @@ export default function Landing() {
           무료로 안전진단 시작하기
         </Link>
         <p className="mt-4 text-xs text-gray-400">회원가입 없이 무료로 이용할 수 있습니다.</p>
+        <div className="mt-6 flex items-center justify-center gap-4 text-[12px] text-gray-500">
+          <Link to="/terms" className="underline underline-offset-2">이용약관</Link>
+          <Link to="/privacy" className="underline underline-offset-2">개인정보처리방침</Link>
+        </div>
       </div>
     </div>
   )

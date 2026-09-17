@@ -17,3 +17,6 @@ pdfplumber
 
 # address_resolver.py / real_transaction_price_adapter.py / building_register_adapter.py
 requests
+
+# production monitoring
+sentry-sdk

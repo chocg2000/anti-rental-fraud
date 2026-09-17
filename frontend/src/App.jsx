@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import Landing from './pages/Landing'
+import PolicyPage from './pages/PolicyPage'
 import Step1Address from './steps/Step1Address'
 import Step2Documents from './steps/Step2Documents'
 import ResultRoute from './routes/ResultRoute'
@@ -149,6 +150,8 @@ function AppRoutes() {
         }
       />
       <Route path="/result/:id" element={<ResultRoute onRestart={handleRestart} />} />
+      <Route path="/terms" element={<PolicyPage type="terms" />} />
+      <Route path="/privacy" element={<PolicyPage type="privacy" />} />
       <Route path="*" element={<Navigate to="/step1" replace />} />
     </Routes>
   )

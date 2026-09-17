@@ -77,6 +77,25 @@ class TestAssessmentStore(unittest.TestCase):
         self.assertEqual(get_assessment("id1")["overallGrade"], "safe")
         self.assertEqual(get_assessment("id2")["overallGrade"], "danger")
 
+    def test_cleanup_old_assessments_removes_records_older_than_30_days(self):
+        with assessment_store._lock:
+            conn = assessment_store._get_conn()
+            conn.execute(
+                "INSERT INTO assessments (id, data, created_at) VALUES (?, ?, ?)",
+                ("old1", '{"overallGrade": "safe"}', '2020-01-01 00:00:00'),
+            )
+            conn.execute(
+                "INSERT INTO assessments (id, data, created_at) VALUES (?, ?, ?)",
+                ("new1", '{"overallGrade": "warning"}', '2030-01-01 00:00:00'),
+            )
+            conn.commit()
+
+        removed = assessment_store.cleanup_old_assessments(days=30)
+
+        self.assertEqual(removed, 1)
+        self.assertIsNone(get_assessment("old1"))
+        self.assertEqual(get_assessment("new1")["overallGrade"], "warning")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

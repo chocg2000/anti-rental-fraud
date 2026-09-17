@@ -56,6 +56,27 @@ def save_assessment(assessment_id: str, data: dict) -> None:
         conn.commit()
 
 
+def cleanup_old_assessments(days: int = 30) -> int:
+    """
+    30일 이상 지난 진단 결과를 삭제한다.
+
+    이 함수는 README/개인정보처리방침에서 약속한 보관기간과 실제 동작을 맞추기 위한
+    최소 구현이다. API startup 시점에서 한 번 호출되고, 추가 운영 환경에서는 주기적
+    백그라운드 스케줄러로 재호출하면 된다.
+    """
+    if days < 0:
+        raise ValueError("days must be >= 0")
+
+    with _lock:
+        conn = _get_conn()
+        deleted = conn.execute(
+            "DELETE FROM assessments WHERE created_at < datetime('now', '-' || ? || ' days')",
+            (str(days),),
+        )
+        conn.commit()
+        return deleted.rowcount
+
+
 def get_assessment(assessment_id: str) -> dict | None:
     with _lock:
         conn = _get_conn()

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import ScreenShell from '../components/ScreenShell'
 import AddressSearchModal from '../components/AddressSearchModal'
+import { SHORT_TERMS, SHORT_PRIVACY, TERMS_TEXT, PRIVACY_POLICY_TEXT } from '../lib/policyContent'
 import { useNoIndex } from '../lib/seo'
 
 // <input type="date">가 min/max 없이 손으로 빠르게 타이핑하면 연도 칸에 자릿수가
@@ -17,9 +18,15 @@ const PROPERTY_TYPES = [
   { id: 'multi_household', label: '다세대' },
 ]
 
+const SHORT_LIST = {
+  terms: SHORT_TERMS,
+  privacy: SHORT_PRIVACY,
+}
+
 export default function Step1Address({ form, onChange, onNext }) {
   useNoIndex()
   const [searchOpen, setSearchOpen] = useState(false)
+  const [docOpen, setDocOpen] = useState(null)
 
   const set = (key) => (e) => {
     const value = e.target.value
@@ -165,11 +172,6 @@ export default function Step1Address({ form, onChange, onNext }) {
           </div>
         </div>
 
-        {/*
-          ⚠️ 개인정보 수집·이용 동의 UI — 아래 안내 문구는 자리표시자(placeholder)입니다.
-          실제 수집 항목/목적/보유기간/제3자 제공 여부는 서비스 운영 방식이 확정된 뒤
-          법률 검토를 거쳐 반드시 교체해야 합니다. 이 상태로 실서비스에 배포하지 마세요.
-        */}
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-3.5">
           <label className="flex items-start gap-2.5">
             <input
@@ -182,16 +184,51 @@ export default function Step1Address({ form, onChange, onNext }) {
               className="mt-0.5 h-4 w-4 shrink-0"
             />
             <span className="text-[13px] font-semibold text-gray-800">
-              개인정보 수집·이용에 동의합니다 <span className="text-red-600">(필수)</span>
+              이용약관 및 개인정보 수집·이용 동의 <span className="text-red-600">(필수)</span>
             </span>
           </label>
           <div className="text-[11px] leading-relaxed text-amber-700">
-            [placeholder — 법률 검토 필요] 수집 항목: 주소, 전용면적, 보증금, 임대인 이름,
-            (선택) 등기부등본 PDF. 수집 목적: 전세/월세 안전진단 결과 산출. 이 문구는
-            임시 자리표시자이며, 실제 수집·이용 목적/보유기간/제3자 제공 여부를 반영한
-            정식 개인정보처리방침으로 반드시 교체해야 합니다.
+            <ul className="list-disc space-y-1 pl-4">
+              {SHORT_LIST.terms.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-medium">
+              <button type="button" onClick={() => setDocOpen('terms')} className="text-amber-800 underline underline-offset-2">
+                이용약관 보기
+              </button>
+              <span className="text-amber-600">|</span>
+              <button type="button" onClick={() => setDocOpen('privacy')} className="text-amber-800 underline underline-offset-2">
+                개인정보처리방침 보기
+              </button>
+            </div>
           </div>
         </div>
+
+        {docOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => setDocOpen(null)}>
+            <div className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div className="text-base font-bold text-gray-900">
+                  {docOpen === 'terms' ? '이용약관' : '개인정보처리방침'}
+                </div>
+                <button type="button" onClick={() => setDocOpen(null)} className="rounded-full border border-gray-200 px-2 py-1 text-[12px] font-medium text-gray-600">
+                  닫기
+                </button>
+              </div>
+
+              <div className="space-y-4 text-[12px] leading-6 text-gray-700">
+                {(docOpen === 'terms' ? TERMS_TEXT : PRIVACY_POLICY_TEXT).map((section) => (
+                  <div key={section.title} className="space-y-1">
+                    <div className="font-semibold text-gray-900">{section.title}</div>
+                    <p>{section.body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </ScreenShell>
     {searchOpen && <AddressSearchModal onSelect={handleAddressSelected} onClose={() => setSearchOpen(false)} />}
